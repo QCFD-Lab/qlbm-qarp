@@ -14,7 +14,7 @@ modules handle the parameterized creation of quantum circuits that compose QBMs.
 The :ref:`lattice` module parses external information into quantum
 registers and provides uniform interfaces for underlying algorithms.
 The :ref:`infra` module integrates the quantum components
-with Tket, Qiskit, and Qulacs transpilers and runners.
+with the ``qarp`` block compiler and the ``qarpx`` simulator.
 The :ref:`tools` module contains miscellaneous utilities.
 
 ``qlbm`` currently supports three algorithms:

@@ -171,3 +171,5 @@ test/artifacts
 qlbm-output
 
 *.gif
+# Differential fixtures above the committed size limit (test/oracle/fixture_store.py).
+test/oracle/fixtures/large/

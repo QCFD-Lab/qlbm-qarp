@@ -9,7 +9,12 @@ from .components import (
     MSStreamingOperator,
     SpecularReflectionOperator,
 )
-from .infra import AmplitudeResult, CircuitCompiler, QiskitRunner
+from .infra import (
+    AmplitudeResult,
+    CircuitCompiler,
+    QarpRunner,
+    SimulationConfig,
+)
 from .lattice import ABLattice, Lattice, LQLGALattice, MSLattice, SpaceTimeLattice
 
 __all__ = [
@@ -23,6 +28,7 @@ __all__ = [
     "BounceBackReflectionOperator",
     "CQLBM",
     "CircuitCompiler",
-    "QiskitRunner",
+    "SimulationConfig",
+    "QarpRunner",
     "AmplitudeResult",
 ]

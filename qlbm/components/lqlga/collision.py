@@ -1,60 +1,32 @@
 """Collision operators for the :class:`.LQLGA` algorithm."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
-
-from qiskit import QuantumCircuit
 from typing_extensions import override
 
-from qlbm.components.base import LQLGAOperator
+from qlbm.components.base import LBMOperator
 from qlbm.components.common.cbse_collision.cbse_collision import EQCCollisionOperator
 from qlbm.lattice.lattices.lqlga_lattice import LQLGALattice
 
 
-class GenericLQLGACollisionOperator(LQLGAOperator):
+class GenericLQLGACollisionOperator(LBMOperator):
     """
     Equivalence class-based LGA collision operator for the :class:`.LQLGA` algorithm.
 
     This operator applies the :class:`.EQCCollisionOperator` operator to all velocity qubits at each grid point.
     """
 
-    def __init__(
-        self,
-        lattice: LQLGALattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(lattice, logger)
-        self.lattice = lattice
+    lattice: LQLGALattice
 
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+    def __init__(self, lattice: LQLGALattice) -> None:
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        local_collision_circuit = EQCCollisionOperator(
-            self.lattice.discretization
-        ).circuit
-        circuit = self.lattice.circuit.copy()
-
-        for velocity_qubit_indices in range(
-            0,
-            self.lattice.num_base_qubits,
-            self.lattice.num_velocities_per_point,
-        ):
-            circuit.compose(
-                local_collision_circuit,
-                inplace=True,
-                qubits=range(
-                    velocity_qubit_indices,
-                    velocity_qubit_indices + self.lattice.num_velocities_per_point,
-                ),
+    def build_vanilla(self) -> None:
+        stride = self.lattice.num_velocities_per_point
+        for start in range(0, self.lattice.num_base_qubits, stride):
+            self.place(
+                EQCCollisionOperator(self.lattice.discretization),
+                range(start, start + stride),
             )
-
-        return circuit
 
     @override
     def __str__(self) -> str:

@@ -1,6 +1,6 @@
 """Encoding utilities for amplitude-based lattices and components."""
 
-from matplotlib.pylab import Enum
+from enum import Enum
 
 
 class ABEncodingType(Enum):
@@ -13,6 +13,6 @@ class ABEncodingType(Enum):
     * (3, ``ABEncodingType.MS``, The multi-speed encoding.).
     """
 
-    AB = (1, )
-    OH = (2, )
-    MS = (3, )
+    AB = (1,)
+    OH = (2,)
+    MS = (3,)

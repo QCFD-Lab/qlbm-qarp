@@ -1,8 +1,5 @@
 """The end-to-end algorithm of the Space-Time Quantum Lattice Boltzmann Algorithm described in :cite:`spacetime`."""
 
-from logging import Logger, getLogger
-
-from qiskit import QuantumCircuit
 from typing_extensions import override
 
 from qlbm.components.base import LBMAlgorithm
@@ -45,59 +42,36 @@ class LQLGA(LBMAlgorithm):
             },
         )
 
-        LQLGA(lattice=lattice).draw("mpl")
+        LQLGA(lattice=lattice).plot()
 
     """
 
     lattice: LQLGALattice
 
-    def __init__(
-        self,
-        lattice: LQLGALattice,
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(lattice, logger)
-
-        self.lattice = lattice
-
-        self.circuit = self.create_circuit()
+    def __init__(self, lattice: LQLGALattice) -> None:
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = self.lattice.circuit.copy()
-
-        circuit.compose(
-            GenericLQLGACollisionOperator(self.lattice, self.logger).circuit,
-            inplace=True,
-        )
-
-        circuit.compose(
-            LQLGAStreamingOperator(self.lattice, self.logger).circuit, inplace=True
-        )
-
+    def build_vanilla(self) -> None:
+        self.place(GenericLQLGACollisionOperator(self.lattice))
+        self.place(LQLGAStreamingOperator(self.lattice))
         if self.lattice.has_multiple_geometries():
-            circuit.compose(
+            self.place(
                 LQLGAMGReflectionOperator(
                     self.lattice,
                     [
                         gdict["bounceback"] + gdict["specular"]
                         for gdict in self.lattice.geometries
                     ],
-                    self.logger,
-                ).circuit,
-                inplace=True,
+                )
             )
         else:
-            circuit.compose(
+            self.place(
                 LQLGAReflectionOperator(
                     self.lattice,
                     self.lattice.shapes["bounceback"] + self.lattice.shapes["specular"],
-                    self.logger,
-                ).circuit,
-                inplace=True,
+                )
             )
-
-        return circuit
 
     @override
     def __str__(self) -> str:

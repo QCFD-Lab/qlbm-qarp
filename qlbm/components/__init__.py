@@ -14,12 +14,12 @@ from .ab import (
     ABZoneAgnosticReflectionOracle,
 )
 from .base import (
+    ControllableComponent,
+    LatticePrimitive,
     LBMAlgorithm,
+    LBMComposite,
     LBMOperator,
     LBMPrimitive,
-    MSOperator,
-    QuantumComponent,
-    SpaceTimeOperator,
 )
 from .common import (
     EmptyPrimitive,
@@ -54,12 +54,12 @@ from .ms.streaming import (
 )
 
 __all__ = [
-    "QuantumComponent",
     "LBMPrimitive",
+    "LatticePrimitive",
+    "LBMComposite",
+    "ControllableComponent",
     "GenericLQLGACollisionOperator",
     "LBMOperator",
-    "MSOperator",
-    "SpaceTimeOperator",
     "LBMAlgorithm",
     "SingleRegisterComparator",
     "ParameterizedDraperAdder",

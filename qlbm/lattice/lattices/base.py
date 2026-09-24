@@ -7,7 +7,6 @@ from abc import ABC, abstractmethod
 from logging import Logger, getLogger
 from typing import TYPE_CHECKING, Dict, List, Tuple
 
-from qiskit import QuantumCircuit, QuantumRegister
 from typing_extensions import override
 
 if TYPE_CHECKING:
@@ -20,6 +19,7 @@ from qlbm.lattice.geometry.shapes.base import Shape
 from qlbm.lattice.geometry.shapes.block import Block
 from qlbm.lattice.geometry.shapes.circle import Circle
 from qlbm.lattice.geometry.shapes.ymonomial import YMonomial
+from qlbm.lattice.registers import Register
 from qlbm.lattice.spacetime.properties_base import (
     LatticeDiscretization,
     LatticeDiscretizationProperties,
@@ -52,7 +52,7 @@ class Lattice(ABC):
     :attr:`num_ancilla_qubits`  The total number of ancllary qubits required for the quantum circuit to simulate this lattice.
     :attr:`num_total_qubits`    The total number of qubits required for the quantum circuit to simulate the lattice.
     :attr:`registers`           The qubit registers of the quantum algorithm.
-    :attr:`circuit`             The blueprint quantum circuit for all components of the algorithm.
+    :attr:`n_qubits`            The total number of qubits across all lattice registers (the blueprint width).
     :attr:`discretization`      The discretization of the lattice, as an enum value of :class:`.LatticeDiscretization`.
     :attr:`shapes`              A list of the solid geometry objects.
     :attr:`logger`              The performance logger.
@@ -135,15 +135,17 @@ class Lattice(ABC):
     The total number of qubits required for the quantum circuit to simulate the lattice. This is the sum of the number of grid, velocity, and ancilla qubits.
     """
 
-    velocity_register: Tuple[QuantumRegister, ...]
+    velocity_register: List[Register]
     """
-    A tuple that holds registers responsible for specific operations of the QLBM algorithm.
+    The registers responsible for the velocity-space operations of the QLBM algorithm.
+    ``get_registers`` returns lists, so every subclass holds a list here.
     """
-    circuit: QuantumCircuit
+
+    registers: Tuple[Register, ...]
     """
-    An empty ``qiskit.QuantumCircuit`` with labeled registers that quantum components use as a base.
-    Each quantum component that is parameterized by a :class:`.Lattice` makes a copy of this quantum circuit
-    to which it appends its designated logic.
+    The flat tuple of :class:`.Register`\\ s of the lattice, in declaration order.
+    Register offsets are cumulative in this order; quantum components address
+    qubits through the lattice's integer index helpers.
     """
 
     shapes: Dict[str, List[Shape]]
@@ -156,9 +158,9 @@ class Lattice(ABC):
     The performance logger, by default ``getLogger("qlbm")``.
     """
 
-    register: Tuple[List[QuantumRegister], ...]
+    register: Tuple[List[Register], ...]
     """
-    A tuple of lists of :class:`qiskit.QuantumRegister` s that are used to store the quantum information of the lattice.
+    A tuple of lists of :class:`.Register` s that are used to store the quantum information of the lattice.
     """
 
     discretization: LatticeDiscretization
@@ -173,6 +175,19 @@ class Lattice(ABC):
     ) -> None:
         super().__init__()
         self.logger = logger
+
+    @property
+    def n_qubits(self) -> int:
+        """Total number of qubits across all lattice registers.
+
+        Quantum components size their blocks from it.
+
+        Returns
+        -------
+        int
+            The total qubit count of the lattice layout.
+        """
+        return sum(len(register) for register in self.registers)
 
     def parse_input_data(
         self,
@@ -526,13 +541,13 @@ class Lattice(ABC):
         return json.dumps(lattice_dict)
 
     @abstractmethod
-    def get_registers(self) -> Tuple[List[QuantumRegister], ...]:
+    def get_registers(self) -> Tuple[List[Register], ...]:
         """
         Generates the registers on which the quantum circuits will be placed.
 
         Returns
         -------
-        Tuple[List[QuantumRegister], ...]
+        Tuple[List[Register], ...]
             A fixed number of registers according to the lattice specification.
         """
         pass
@@ -785,9 +800,4 @@ class AmplitudeLattice(Lattice, ABC):
         ABEncodingType
             The encoding of this lattice.
         """
-        pass
-
-    @abstractmethod
-    def get_base_circuit(self) -> QuantumCircuit:
-        """Get the base quantum circuit, without any multi-geometry or accumulation qubits."""
         pass

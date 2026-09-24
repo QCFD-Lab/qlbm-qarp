@@ -1,17 +1,15 @@
 """Initial conditions for the :class:`.LQLGA` algorithm."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
 from typing import List, Tuple
 
 from typing_extensions import override
 
-from qlbm.components.base import LBMPrimitive
+from qlbm.components.base import LatticePrimitive
 from qlbm.lattice.lattices.lqlga_lattice import LQLGALattice
 from qlbm.tools.utils import flatten
 
 
-class LQGLAInitialConditions(LBMPrimitive):
+class LQGLAInitialConditions(LatticePrimitive):
     """
     Primitive for setting initial conditions in the :class:`.LQLGA` algorithm.
 
@@ -37,7 +35,7 @@ class LQGLAInitialConditions(LBMPrimitive):
             },
         )
         initial_conditions = LQGLAInitialConditions(lattice, [(tuple([2]), (True, True, True))])
-        initial_conditions.draw("mpl")
+        initial_conditions.plot()
     """
 
     grid_data: List[Tuple[Tuple[int, ...], Tuple[bool, ...]]]
@@ -47,53 +45,36 @@ class LQGLAInitialConditions(LBMPrimitive):
     #. A tuple of booleans indicating which velocity qubits are enabled at that grid point.
     """
 
+    lattice: LQLGALattice
+
     def __init__(
         self,
         lattice: LQLGALattice,
         grid_data: List[Tuple[Tuple[int, ...], Tuple[bool, ...]]],
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(logger)
-
-        self.lattice = lattice
+    ) -> None:
         self.grid_data = grid_data
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self):
-        circuit = self.lattice.circuit.copy()
-
-        for tup in self.grid_data:
-            gp, vel_profile = tup[0], tup[1]
-
-            if not any(vel_profile):
-                continue
-
-            circuit.x(
-                self.lattice.gridpoint_index_tuple(gp)
-                * self.lattice.num_velocities_per_point
-                + v
-                for v, is_enabled in enumerate(vel_profile)
-                if is_enabled
-            )
-
+    def build_vanilla(self) -> None:
+        stride = self.lattice.num_velocities_per_point
+        enabled = [
+            self.lattice.gridpoint_index_tuple(gridpoint) * stride + velocity
+            for gridpoint, velocity_profile in self.grid_data
+            for velocity, is_enabled in enumerate(velocity_profile)
+            if is_enabled
+        ]
+        if enabled:
+            self.x(enabled)
         if self.lattice.has_multiple_geometries():
-            circuit.h(self.lattice.marker_index())
-
-        return circuit
+            self.h(self.lattice.marker_index())
 
     @override
     def __str__(self):
         return f"[Primitive LQGLAInitialConditions on lattice={self.lattice}, grid_data={self.grid_data})]"
 
 
-class LQGLAAveragedInitialConditions(LBMPrimitive):
+class LQGLAAveragedInitialConditions(LatticePrimitive):
     """
     Primitive for setting initial conditions in the :class:`.LQLGA` algorithm.
 
@@ -120,51 +101,30 @@ class LQGLAAveragedInitialConditions(LBMPrimitive):
             },
         )
         initial_conditions = LQGLAAveragedInitialConditions(lattice, [0, 2, 3])
-        initial_conditions.draw("mpl")
+        initial_conditions.plot()
 
     """
 
     gridpoints: List[int]
     """The gridpoints to create the uniform superposition over."""
 
-    def __init__(
-        self,
-        lattice: LQLGALattice,
-        gridpoints: List[int],
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(logger)
+    lattice: LQLGALattice
 
-        self.lattice = lattice
+    def __init__(self, lattice: LQLGALattice, gridpoints: List[int]) -> None:
         self.gridpoints = gridpoints
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self):
-        circuit = self.lattice.circuit.copy()
-
-        circuit.h(
+    def build_vanilla(self) -> None:
+        stride = self.lattice.num_velocities_per_point
+        self.h(
             flatten(
                 [
-                    list(
-                        range(
-                            gp * self.lattice.num_velocities_per_point,
-                            gp * self.lattice.num_velocities_per_point
-                            + self.lattice.num_velocities_per_point,
-                        )
-                    )
+                    list(range(gp * stride, gp * stride + stride))
                     for gp in self.gridpoints
                 ]
             )
         )
-
-        return circuit
 
     @override
     def __str__(self):

@@ -1,13 +1,10 @@
 """:class:`.SpaceTimeQLBM`-specific implementation of the :class:`.Reinitializer`."""
 
 from logging import Logger, getLogger
-from typing import List, Tuple, cast
+from typing import Dict, List, Tuple, cast
 
-from qiskit import QuantumCircuit as QiskitQC
-from qiskit.quantum_info import Statevector
-from qiskit.result import Counts
-from qiskit_aer.backends.aer_simulator import AerBackend
-from qulacs import QuantumCircuit as QulacsQC
+import numpy as np
+import qarpx as qx
 from typing_extensions import override
 
 from qlbm.components.spacetime.initial.pointwise import (
@@ -24,25 +21,27 @@ class SpaceTimeReinitializer(Reinitializer):
     r"""
     :class:`.SpaceTimeQLBM`-specific implementation of the :class:`.Reinitializer`.
 
-    Compatible with both :class:`.QiskitRunner`\ s and :class:`.QulacsRunner`\ s.
-    To generate a new set of initial conditions for the Space-Time encoding,
-    the reinitializer simply returns the quantum state computed
-    at the end of the previous simulation.
-    This allows the reuse of a single quantum circuit for the simulation
-    of arbitrarily many time steps.
-    No copy of the statevector is required.
+    The Space-Time encoding can only be evolved for as many time steps as the
+    lattice was constructed with, after which the state must be re-synthesized.
+    This reinitializer decodes the counts sampled by
+    :class:`.SpaceTimeGridVelocityMeasurement` into ``(gridpoint, velocity profile)``
+    pairs and rebuilds a :class:`.PointWiseSpaceTimeInitialConditions` circuit
+    from them. No copy of the statevector is required.
+
+    Counts are keyed by LSB classical-bit integers: the grid coordinates occupy
+    cbits :math:`0 \dots n_g - 1` (dimension-major) and the origin's velocity
+    profile occupies cbits :math:`n_g \dots n_g + n_v - 1`.
 
     =========================== ======================================================================
     Attribute                   Summary
     =========================== ======================================================================
     :attr:`lattice`             The :class:`.SpaceTimeLattice` of the simulated system.
-    :attr:`compiler`            The compiler that converts the novel initial conditions circuits.
+    :attr:`compiler`            The compiler that lowers novel initial conditions circuits.
     :attr:`logger`              The performance logger, by default ``getLogger("qlbm")``
     =========================== ======================================================================
     """
 
     lattice: SpaceTimeLattice
-    counts: Counts
 
     def __init__(
         self,
@@ -59,32 +58,38 @@ class SpaceTimeReinitializer(Reinitializer):
             if self.lattice.num_dims > 1
             else 0
         )
+        self.num_grid_qubits = self.x_grid_qubits + self.y_grid_qubits
+        self.num_velocities_per_point = (
+            self.lattice.properties.get_num_velocities_per_point()
+        )
 
+    @override
     def reinitialize(
         self,
-        statevector: Statevector,
-        counts: Counts,
-        backend: AerBackend | None,
+        statevector: np.ndarray,
+        counts: Dict[int, float],
+        n_cbits: int | None = None,
         optimization_level: int = 0,
-    ) -> QiskitQC | QulacsQC:
+    ) -> "qx.Block":
         """
-        Converts the input ``counts`` into a new :class:`.PointWiseSpaceTimeInitialConditions` object that can be prepended to the time step circuit to resume simulation.
+        Converts the input ``counts`` into a new :class:`.PointWiseSpaceTimeInitialConditions` block that seeds the following time step.
 
         Parameters
         ----------
-        statevector : Statevector
+        statevector : np.ndarray
             Ignored.
-        counts : Counts
-            The counts obtained from :class:`.SpaceTimeGridVelocityMeasurement` at the end of the simulation.
-        backend : AerBackend | None
-            The backend used for simulation.
+        counts : Dict[int, float]
+            The counts obtained from :class:`.SpaceTimeGridVelocityMeasurement`,
+            keyed by LSB classical-bit integer.
+        n_cbits : int | None, optional
+            Ignored; the register layout follows from the lattice.
         optimization_level : int, optional
             The compiler optimization level.
 
         Returns
         -------
-        QiskitQC | QulacsQC
-            The suitably compiles initial conditions circuit.
+        qx.Block
+            The initial conditions block to apply from the all-zero state.
         """
         return self.compiler.compile(
             PointWiseSpaceTimeInitialConditions(
@@ -92,80 +97,73 @@ class SpaceTimeReinitializer(Reinitializer):
                 self.counts_to_velocity_pairs(counts),
                 self.lattice.filter_inside_blocks,
             ),
-            backend=backend,
             optimization_level=optimization_level,
         )
 
     def counts_to_velocity_pairs(
         self,
-        counts: Counts,
+        counts: Dict[int, float],
     ) -> List[Tuple[Tuple[int, ...], Tuple[bool, ...]]]:
         """
         Converts all counts into their grid and velocity components.
 
+        Outcomes whose origin velocity profile is empty carry no population and
+        are dropped.
+
         Parameters
         ----------
-        counts : Counts
-            The Qiskit ``Count`` output of the simulation.
+        counts : Dict[int, float]
+            The LSB-integer-keyed counts of the simulation.
 
         Returns
         -------
-        List[Tuple[Tuple[int, int], Tuple[bool, bool, bool, bool]]]
+        List[Tuple[Tuple[int, ...], Tuple[bool, ...]]]
             The input counts split into their grid position and velocity profile.
         """
         return [
-            self.split_count(count)
-            for count in counts
-            if int(count[: self.lattice.properties.get_num_velocities_per_point()], 2)
-            > 0
+            self.split_count(key) for key in counts if (key >> self.num_grid_qubits) > 0
         ]
 
-    def split_count(self, count: str) -> Tuple[Tuple[int, ...], Tuple[bool, ...]]:
+    def split_count(self, key: int) -> Tuple[Tuple[int, ...], Tuple[bool, ...]]:
         """
-        Splits a given ``Count`` into its position and velocity components.
+        Splits a given count key into its position and velocity components.
 
-        Counts are assumed to be obtained from :class:`.SpaceTimeGridVelocityMeasurement` objects,
-        and split format is the same as the input to :class:`.PointWiseSpaceTimeInitialConditions`.
+        Counts are assumed to be obtained from :class:`.SpaceTimeGridVelocityMeasurement`,
+        and the split format is the same as the input to :class:`.PointWiseSpaceTimeInitialConditions`.
 
         Parameters
         ----------
-        count : str
-            The Qiskit ``Count`` output of the simulation.
+        key : int
+            The LSB classical-bit integer key of one measurement outcome.
 
         Returns
         -------
-        Tuple[Tuple[int, int], Tuple[bool, bool, bool, bool]]
+        Tuple[Tuple[int, ...], Tuple[bool, ...]]
             The input count split into its grid position and velocity profile.
+            The position tuple has one entry per lattice dimension.
+
+        Raises
+        ------
+        ExecutionException
+            If the lattice has more than 2 dimensions.
         """
-        inverse_count = count[::-1]
+        velocities = cast(
+            Tuple[bool, ...],
+            tuple(
+                bool((key >> (self.num_grid_qubits + v)) & 1)
+                for v in range(self.num_velocities_per_point)
+            ),
+        )
+
         if self.lattice.num_dims == 1:
-            return (
-                (int(inverse_count[: self.x_grid_qubits][::-1], 2), 0),
-                cast(
-                    Tuple[bool, bool],
-                    tuple(bool(int(x, 2)) for x in inverse_count[self.x_grid_qubits :]),
-                ),
-            )
+            return ((key & ((1 << self.x_grid_qubits) - 1),), velocities)
         elif self.lattice.num_dims == 2:
             return (
                 (
-                    int(inverse_count[: self.x_grid_qubits][::-1], 2),
-                    int(
-                        inverse_count[
-                            self.x_grid_qubits : self.x_grid_qubits + self.y_grid_qubits
-                        ][::-1],
-                        2,
-                    ),
+                    key & ((1 << self.x_grid_qubits) - 1),
+                    (key >> self.x_grid_qubits) & ((1 << self.y_grid_qubits) - 1),
                 ),
-                cast(
-                    Tuple[bool, bool, bool, bool],
-                    tuple(
-                        bool(int(x, 2))
-                        for x in inverse_count[
-                            self.x_grid_qubits + self.y_grid_qubits :
-                        ]
-                    ),
-                ),
+                velocities,
             )
 
         raise ExecutionException(

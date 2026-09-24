@@ -1,6 +1,7 @@
 """Common primitives used for multiple encodings."""
 
 from .adders import ParameterizedDraperAdder, ParameterizedPhaseShift, PhaseShift
+from .arithmetic import DraperQFTAdder, RGQFTMultiplier, ccp
 from .cbse_collision import EQCCollisionOperator, EQCPermutation, EQCRedistribution
 from .comparators import SingleRegisterComparator, TwoRegisterComparator
 from .primitives import (
@@ -15,6 +16,9 @@ from .primitives import (
 
 __all__ = [
     "AdditionConversion",
+    "DraperQFTAdder",
+    "RGQFTMultiplier",
+    "ccp",
     "EmptyPrimitive",
     "EQCCollisionOperator",
     "EQCPermutation",

@@ -26,10 +26,7 @@ Runners
 .. autoclass:: qlbm.infra.runner.base.CircuitRunner
     :members:
 
-.. autoclass:: qlbm.infra.runner.qiskit_runner.QiskitRunner
-    :members:
-
-.. autoclass:: qlbm.infra.runner.qulacs_runner.QulacsRunner
+.. autoclass:: qlbm.infra.runner.qarp_runner.QarpRunner
     :members:
 
 .. _performance:

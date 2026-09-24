@@ -1,10 +1,10 @@
 from itertools import product
 
 import pytest
-from qiskit import ClassicalRegister, transpile
-from qiskit_aer import AerSimulator
 
 from qlbm.components.ab.initial import ABDiscreteUniformInitialConditions
+
+from .qarp_helpers import lattice_builder, sample_register_counts
 
 
 @pytest.mark.parametrize(
@@ -18,25 +18,16 @@ from qlbm.components.ab.initial import ABDiscreteUniformInitialConditions
 )
 def test_initial_ab_no_gird_superposition(velocities, lattice_fixture, request):
     lattice = request.getfixturevalue(lattice_fixture)
-    sim = AerSimulator()
 
-    qc = lattice.circuit.copy()
-    qc.add_register(ClassicalRegister(4))
-    qc.compose(
-        ABDiscreteUniformInitialConditions(
-            lattice, velocities, ([], [])
-        ).circuit,
-        inplace=True,
+    builder = lattice_builder(lattice)
+    builder.compose(
+        ABDiscreteUniformInitialConditions(lattice, velocities, ([], [])),
     )
 
-    qc.measure(lattice.velocity_index(), list(range(4)))
-    tqc = transpile(qc, sim, optimization_level=0)
+    counts = sample_register_counts(builder, lattice.velocity_index(), shots=256)
+    output_velocities = sorted(counts.keys())
 
-    counts = sim.run(tqc, shots=256).result().get_counts()
-
-    output_velocities = list(set([int(c, 2) for c in counts.keys()]))
-
-    assert sorted(output_velocities) == sorted(velocities), (
+    assert output_velocities == sorted(velocities), (
         f"Expected output velocities to be {velocities}, got {output_velocities}"
     )
 
@@ -52,24 +43,15 @@ def test_initial_ab_no_gird_superposition(velocities, lattice_fixture, request):
 )
 def test_initial_oh_no_gird_superposition(velocities, lattice_fixture, request):
     lattice = request.getfixturevalue(lattice_fixture)
-    sim = AerSimulator()
 
-    qc = lattice.circuit.copy()
-    qc.add_register(ClassicalRegister(9))
-    qc.compose(
-        ABDiscreteUniformInitialConditions(
-            lattice, velocities, ([], [])
-        ).circuit,
-        inplace=True,
+    builder = lattice_builder(lattice)
+    builder.compose(
+        ABDiscreteUniformInitialConditions(lattice, velocities, ([], [])),
     )
 
-    qc.measure(lattice.velocity_index(), list(range(9)))
-    tqc = transpile(qc, sim, optimization_level=0)
+    counts = sample_register_counts(builder, lattice.velocity_index(), shots=256)
+    output_velocities = sorted(counts.keys())
 
-    counts = sim.run(tqc, shots=256).result().get_counts()
-
-    output_velocities = list(set([int(c, 2) for c in counts.keys()]))
-
-    assert sorted(output_velocities) == sorted([2**v for v in velocities]), (
+    assert output_velocities == sorted([2**v for v in velocities]), (
         f"Expected output velocities to be {velocities}, got {output_velocities}"
     )

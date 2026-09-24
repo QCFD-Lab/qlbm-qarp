@@ -160,4 +160,7 @@ class EquivalenceClass:
 
     @override
     def __hash__(self):
+        # frozenset, not tuple: `tuple(a_set)` orders by the set's internal
+        # layout, so two __eq__-equal classes built in different insertion
+        # orders would hash differently and break membership and dedup.
         return hash((self.discretization, frozenset(self.velocity_configurations)))

@@ -1,17 +1,13 @@
 """Quantum circuits used for setting the initial state in the :class:`ABQLBM` algorithm."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
 from typing import List, Tuple
 
-import numpy as np
-from qiskit import QuantumCircuit
-from qiskit.circuit.library import HGate, MCMTGate
+from qarp.blocks import HnBlock
 from typing_extensions import override
 
 from qlbm.components.ab.encodings import ABEncodingType
 from qlbm.components.ab.utils import BinaryToOHPermutation
-from qlbm.components.base import LBMPrimitive
+from qlbm.components.base import LBMOperator, controlled
 from qlbm.components.common.primitives import (
     AdditionConversion,
     StateSetter,
@@ -22,7 +18,42 @@ from qlbm.tools.exceptions import CircuitException, LatticeException
 from qlbm.tools.utils import dimension_letter
 
 
-class ABInitialConditions(LBMPrimitive):
+def _validate_configuration(
+    lattice: ABLattice,
+    velocity_indices: List[int],
+    grid_qubits_to_superpose: Tuple[List[int], ...],
+) -> None:
+    if any(v not in range(lattice.num_velocities_per_point) for v in velocity_indices):
+        raise LatticeException(
+            f"Velocity indices should be in the interval 0..{lattice.num_velocities_per_point}"
+        )
+    if len(grid_qubits_to_superpose) != lattice.num_dims:
+        raise LatticeException(
+            f"Lattice has {lattice.num_dims} dimensions, but provided grid qubit information has {len(grid_qubits_to_superpose)} entries."
+        )
+    for dim in range(lattice.num_dims):
+        if any(
+            q not in range(lattice.num_gridpoints[dim].bit_length())
+            for q in grid_qubits_to_superpose[dim]
+        ):
+            raise LatticeException(
+                f"Grid qubit specification in dimension {dimension_letter(dim)} out of range."
+            )
+
+
+def _conversions(velocity_indices: List[int]) -> List[Tuple[int, int]]:
+    """The (from, to) basis-state conversions that move the uniform superposition onto ``velocity_indices``."""
+    states_from = list(range(len(velocity_indices)))
+    states_to = velocity_indices.copy()
+    # Remove indices that are already in place
+    for v in velocity_indices:
+        if v < len(velocity_indices):
+            states_from.remove(v)
+            states_to.remove(v)
+    return list(zip(states_from, states_to, strict=True))
+
+
+class ABInitialConditions(LBMOperator):
     """
     Initial conditions for the :class:`ABQLBM` algorithm.
 
@@ -31,8 +62,7 @@ class ABInitialConditions(LBMPrimitive):
 
     Example usage:
 
-    .. plot::
-        :include-source:
+    .. code-block:: python
 
         from qlbm.components.ab import ABInitialConditions
         from qlbm.lattice import ABLattice
@@ -44,82 +74,44 @@ class ABInitialConditions(LBMPrimitive):
             }
         )
 
-        ABInitialConditions(lattice).draw("mpl")
-
-    You can also get the low-level decomposition of the circuit as:
-
-    .. plot::
-        :include-source:
-
-        from qlbm.components.ab import ABInitialConditions
-        from qlbm.lattice import ABLattice
-
-        lattice = ABLattice(
-            {
-                "lattice": {"dim": {"x": 4, "y": 4}, "velocities": "d2q9"},
-                "geometry": [],
-            }
-        )
-
-        ABInitialConditions(lattice).circuit.decompose(reps=2).draw("mpl")
+        ABInitialConditions(lattice).plot()
     """
 
     lattice: ABLattice
 
-    def __init__(
-        self,
-        lattice: ABLattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(logger)
-        self.lattice = lattice
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+    def __init__(self, lattice: ABLattice) -> None:
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = QuantumCircuit(*self.lattice.registers)
-
-        circuit.compose(
+    def build_vanilla(self) -> None:
+        self.place(
             UniformStatePrep(
-                self.lattice.num_velocity_qubits,
-                self.lattice.num_velocities_per_point,
-                logger=self.logger,
-            ).circuit,
-            qubits=self.lattice.velocity_index()[: self.lattice.num_velocity_qubits],
-            inplace=True,
+                self.lattice.num_velocity_qubits, self.lattice.num_velocities_per_point
+            ),
+            self.lattice.velocity_index()[: self.lattice.num_velocity_qubits],
         )
-
         match self.lattice.get_encoding():
             case ABEncodingType.AB:
-                circuit.h(self.lattice.grid_index(1))
+                grid_index = self.lattice.grid_index(1)
+                self.place(HnBlock(len(grid_index)), grid_index)
             case ABEncodingType.OH:
-                circuit.compose(
-                    BinaryToOHPermutation(self.lattice, self.logger).circuit,
-                    qubits=self.lattice.velocity_index(),
-                    inplace=True,
+                self.place(
+                    BinaryToOHPermutation(self.lattice), self.lattice.velocity_index()
                 )
             case _:
                 raise LatticeException(
                     f"Encoding {self.lattice.get_encoding()} not supported."
                 )
-
         if self.lattice.has_multiple_geometries():
-            circuit.h(self.lattice.marker_index())
-
-        return circuit
+            marker = self.lattice.marker_index()
+            self.place(HnBlock(len(marker)), marker)
 
     @override
     def __str__(self) -> str:
         return f"[Primitive ABEInitialConditions with lattice {self.lattice}]"
 
 
-class ABDiscreteUniformInitialConditions(LBMPrimitive):
+class ABDiscreteUniformInitialConditions(LBMOperator):
     """
     Initial conditions for the :class:`ABQLBM` algorithm.
 
@@ -127,8 +119,7 @@ class ABDiscreteUniformInitialConditions(LBMPrimitive):
 
     Example usage:
 
-    .. plot::
-        :include-source:
+    .. code-block:: python
 
         from qlbm.components.ab import ABDiscreteUniformInitialConditions
         from qlbm.lattice import ABLattice
@@ -139,12 +130,11 @@ class ABDiscreteUniformInitialConditions(LBMPrimitive):
             }
         )
 
-        ABDiscreteUniformInitialConditions(lattice, [1, 3, 4], ([], [])).draw("mpl")
+        ABDiscreteUniformInitialConditions(lattice, [1, 3, 4], ([], [])).plot()
 
     The primitive can also applied to the :class:`.OHLattice`:
 
-    .. plot::
-        :include-source:
+    .. code-block:: python
 
         from qlbm.components.ab import ABDiscreteUniformInitialConditions
         from qlbm.lattice import OHLattice
@@ -155,7 +145,7 @@ class ABDiscreteUniformInitialConditions(LBMPrimitive):
             }
         )
 
-        ABDiscreteUniformInitialConditions(lattice, [0, 1], ([0, 1], [0])).draw("mpl")
+        ABDiscreteUniformInitialConditions(lattice, [0, 1], ([0, 1], [0])).plot()
     """
 
     velocity_indices: List[int]
@@ -169,111 +159,42 @@ class ABDiscreteUniformInitialConditions(LBMPrimitive):
         lattice: ABLattice,
         velocity_indices: List[int],
         grid_qubits_to_superpose: Tuple[List[int], ...],
-        logger: Logger = getLogger("qlbm"),
     ) -> None:
-        super().__init__(logger)
-
-        self.lattice = lattice
-
-        if any(
-            map(
-                lambda x: x
-                not in list(range(0, self.lattice.num_velocities_per_point)),
-                velocity_indices,
-            )
-        ):
-            raise LatticeException(
-                f"Velocity indices should be in the interval 0..{self.lattice.num_velocities_per_point}"
-            )
-
-        if len(grid_qubits_to_superpose) != self.lattice.num_dims:
-            raise LatticeException(
-                f"Lattice has {self.lattice.num_dims} dimensions, but provided grid qubit information has {len(grid_qubits_to_superpose)} entries."
-            )
-
-        for dim in range(self.lattice.num_dims):
-            if any(
-                map(
-                    lambda x: x
-                    not in list(range(self.lattice.num_gridpoints[dim].bit_length())),
-                    grid_qubits_to_superpose[dim],
-                ),
-            ):
-                raise LatticeException(
-                    f"Grid qubit specification in dimension {dimension_letter(dim)} out of range."
-                )
-
+        _validate_configuration(lattice, velocity_indices, grid_qubits_to_superpose)
         self.velocity_indices = sorted(velocity_indices)
         self.grid_qubits_to_superpose = grid_qubits_to_superpose
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = QuantumCircuit(*self.lattice.registers)
-
-        nq = int(np.ceil(np.log2(len(self.velocity_indices))))
-
-        circuit.compose(
-            UniformStatePrep(
-                nq,
-                len(self.velocity_indices),
-                logger=self.logger,
-            ).circuit,
-            qubits=self.lattice.velocity_index()[:nq],
-            inplace=True,
-        )
-
-        states_from = list(range(len(self.velocity_indices)))
-        states_to = self.velocity_indices.copy()
-
-        # Remove indices that are already in place
-        for v in self.velocity_indices:
-            if v < len(self.velocity_indices):
-                states_from.remove(v)
-                states_to.remove(v)
-
-        for v_from, v_to in zip(states_from, states_to):
-            circuit.compose(
-                AdditionConversion(
-                    self.lattice.num_velocity_qubits, v_from, v_to, logger=self.logger
-                ).circuit,
-                qubits=self.lattice.velocity_index()[
-                    : self.lattice.num_velocities_per_point
-                ]  # Additional guard necessary of OH
+    def build_vanilla(self) -> None:
+        num_states = len(self.velocity_indices)
+        nq = (num_states - 1).bit_length()
+        self.place(UniformStatePrep(nq, num_states), self.lattice.velocity_index()[:nq])
+        for v_from, v_to in _conversions(self.velocity_indices):
+            self.place(
+                AdditionConversion(self.lattice.num_velocity_qubits, v_from, v_to),
+                # Additional guard necessary of OH
+                self.lattice.velocity_index()[: self.lattice.num_velocities_per_point]
                 + self.lattice.ancillae_obstacle_index(0),
-                inplace=True,
             )
-
         if self.lattice.get_encoding() == ABEncodingType.OH:
-            circuit.compose(
-                BinaryToOHPermutation(self.lattice, self.logger).circuit,
-                qubits=self.lattice.velocity_index(),
-                inplace=True,
+            self.place(
+                BinaryToOHPermutation(self.lattice), self.lattice.velocity_index()
             )
-
         for dim in range(self.lattice.num_dims):
             if self.grid_qubits_to_superpose[dim]:
-                circuit.h(
-                    [
-                        self.lattice.grid_index(dim)[0] + q
-                        for q in self.grid_qubits_to_superpose[dim]
-                    ]
-                )
-
-        return circuit
+                qubits = [
+                    self.lattice.grid_index(dim)[0] + q
+                    for q in self.grid_qubits_to_superpose[dim]
+                ]
+                self.place(HnBlock(len(qubits)), qubits)
 
     @override
     def __str__(self) -> str:
         return f"[Primitive ABDiscreteUniformInitialConditions with lattice {self.lattice}, v={self.velocity_indices}, g={self.grid_qubits_to_superpose}]"
 
 
-class ABParallelDiscreteUniformInitialConditions(LBMPrimitive):
+class ABParallelDiscreteUniformInitialConditions(LBMOperator):
     """
     Marker-sensitive initial conditions for the :class:`ABQLBM` algorithm.
 
@@ -283,8 +204,7 @@ class ABParallelDiscreteUniformInitialConditions(LBMPrimitive):
 
     Example usage:
 
-    .. plot::
-        :include-source:
+    .. code-block:: python
 
         from qlbm.components.ab import ABParallelDiscreteUniformInitialConditions
         from qlbm.lattice import ABLattice
@@ -301,7 +221,7 @@ class ABParallelDiscreteUniformInitialConditions(LBMPrimitive):
             lattice,
             [[0, 1], [0, 3], [0], [0, 5]],
             [([0], [0])] * 4,
-        ).draw("mpl")
+        ).plot()
 
     """
 
@@ -316,158 +236,75 @@ class ABParallelDiscreteUniformInitialConditions(LBMPrimitive):
         lattice: ABLattice,
         velocity_indices_list: List[List[int]],
         grid_qubits_to_superpose_list: List[Tuple[List[int], ...]],
-        logger: Logger = getLogger("qlbm"),
     ) -> None:
-        super().__init__(logger)
-
-        self.lattice = lattice
-
-        if self.lattice.get_encoding() == ABEncodingType.OH:
+        if lattice.get_encoding() == ABEncodingType.OH:
             raise LatticeException(
                 "OHLattice does not currently support parallel initial conditions."
             )
-
         if len(velocity_indices_list) != len(grid_qubits_to_superpose_list):
             raise CircuitException("Input lists have mismatched lengths.")
-
-        if len(velocity_indices_list) > 2**self.lattice.num_marker_qubits:
+        if len(velocity_indices_list) > 2**lattice.num_marker_qubits:
             raise LatticeException(
-                f"{self.lattice.num_marker_qubits} cannot encode {len(velocity_indices_list)} configurations."
+                f"{lattice.num_marker_qubits} cannot encode {len(velocity_indices_list)} configurations."
             )
-
         for velocity_indices, grid_qubits_to_superpose in zip(
-            velocity_indices_list, grid_qubits_to_superpose_list
+            velocity_indices_list, grid_qubits_to_superpose_list, strict=True
         ):
-            if any(
-                map(
-                    lambda x: x
-                    not in list(range(0, self.lattice.num_velocities_per_point)),
-                    velocity_indices,
-                )
-            ):
-                raise LatticeException(
-                    f"Velocity indices should be in the interval 0..{self.lattice.num_velocities_per_point}"
-                )
-
-            if len(grid_qubits_to_superpose) != self.lattice.num_dims:
-                raise LatticeException(
-                    f"Lattice has {self.lattice.num_dims} dimensions, but provided grid qubit information has {len(grid_qubits_to_superpose)} entries."
-                )
-
-            for dim in range(self.lattice.num_dims):
-                if any(
-                    map(
-                        lambda x: x
-                        not in list(
-                            range(self.lattice.num_gridpoints[dim].bit_length())
-                        ),
-                        grid_qubits_to_superpose[dim],
-                    ),
-                ):
-                    raise LatticeException(
-                        f"Grid qubit specification in dimension {dimension_letter(dim)} out of range."
-                    )
-
+            _validate_configuration(lattice, velocity_indices, grid_qubits_to_superpose)
         self.velocity_indices_list = [
             sorted(velocity_indices) for velocity_indices in velocity_indices_list
         ]
         self.grid_qubits_to_superpose_list = grid_qubits_to_superpose_list
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = QuantumCircuit(*self.lattice.registers)
+    def build_vanilla(self) -> None:
+        marker = self.lattice.marker_index()
+        num_marker_qubits = self.lattice.num_marker_qubits
 
         # Uniform superposition over the marker index
-        circuit.compose(
-            UniformStatePrep(
-                self.lattice.num_marker_qubits,
-                len(self.velocity_indices_list),
-                logger=self.logger,
-            ).circuit,
-            qubits=self.lattice.marker_index(),
-            inplace=True,
+        self.place(
+            UniformStatePrep(num_marker_qubits, len(self.velocity_indices_list)), marker
         )
 
-        for marker_index, velocity_indices, grid_qubits_to_superpose in zip(
-            list(range(len(self.velocity_indices_list))),
-            self.velocity_indices_list,
-            self.grid_qubits_to_superpose_list,
+        for marker_index, (velocity_indices, grid_qubits_to_superpose) in enumerate(
+            zip(
+                self.velocity_indices_list,
+                self.grid_qubits_to_superpose_list,
+                strict=True,
+            )
         ):
-            nq = int(np.ceil(np.log2(len(velocity_indices))))
-
-            state_setter_circ = StateSetter(
-                self.lattice.num_marker_qubits, marker_index, self.logger
-            ).circuit
-
-            circuit.compose(
-                state_setter_circ, qubits=self.lattice.marker_index(), inplace=True
+            num_states = len(velocity_indices)
+            nq = (num_states - 1).bit_length()
+            # Everything below is controlled on the marker register holding marker_index
+            self.place(StateSetter(num_marker_qubits, marker_index), marker)
+            self.place(
+                UniformStatePrep(nq, num_states, num_ctrl_qubits=num_marker_qubits),
+                self.lattice.velocity_index()[:nq] + marker,
             )
-
-            circuit.compose(
-                UniformStatePrep(
-                    nq,
-                    len(velocity_indices),
-                    num_ctrl_qubits=self.lattice.num_marker_qubits,
-                    logger=self.logger,
-                ).circuit,
-                qubits=self.lattice.velocity_index()[:nq] + self.lattice.marker_index(),
-                inplace=True,
-            )
-
-            states_from: List[int] = list(range(len(velocity_indices)))
-            states_to: List[int] = velocity_indices.copy()
-
-            # Remove indices that are already in place
-            for v in velocity_indices:
-                if v < len(velocity_indices):
-                    states_from.remove(v)
-                    states_to.remove(v)
-
-            for v_from, v_to in zip(states_from, states_to):
-                circuit.compose(
+            for v_from, v_to in _conversions(velocity_indices):
+                self.place(
                     AdditionConversion(
                         self.lattice.num_velocity_qubits,
                         v_from,
                         v_to,
-                        num_ctrl_qubits=self.lattice.num_marker_qubits,
-                        logger=self.logger,
-                    ).circuit,
-                    qubits=self.lattice.velocity_index()[
+                        num_ctrl_qubits=num_marker_qubits,
+                    ),
+                    # Additional guard necessary of OH
+                    self.lattice.velocity_index()[
                         : self.lattice.num_velocities_per_point
-                    ]  # Additional guard necessary of OH
+                    ]
                     + self.lattice.ancillae_obstacle_index(0)
-                    + self.lattice.marker_index(),
-                    inplace=True,
+                    + marker,
                 )
-
             for dim in range(self.lattice.num_dims):
                 if grid_qubits_to_superpose[dim]:
-                    qs_to_superpose = [
+                    qubits = [
                         self.lattice.grid_index(dim)[0] + q
                         for q in grid_qubits_to_superpose[dim]
                     ]
-                    circuit.compose(
-                        MCMTGate(
-                            HGate(),
-                            self.lattice.num_marker_qubits,
-                            len(qs_to_superpose),
-                        ),
-                        qubits=self.lattice.marker_index() + qs_to_superpose,
-                        inplace=True,
-                    )
-
-            circuit.compose(
-                state_setter_circ, qubits=self.lattice.marker_index(), inplace=True
-            )
-
-        return circuit.decompose(reps=2)
+                    self.place(controlled(HnBlock(len(qubits)), marker, qubits))
+            self.place(StateSetter(num_marker_qubits, marker_index), marker)
 
     @override
     def __str__(self) -> str:

@@ -3,10 +3,10 @@
 from logging import Logger, getLogger
 from typing import Dict, List, Tuple, cast
 
-from qiskit import QuantumCircuit, QuantumRegister
 from typing_extensions import override
 
 from qlbm.lattice.lattices.base import Lattice
+from qlbm.lattice.registers import Register, assign_offsets
 from qlbm.lattice.spacetime.d1q2 import D1Q2SpaceTimeLatticeBuilder
 from qlbm.lattice.spacetime.d2q4 import D2Q4SpaceTimeLatticeBuilder
 from qlbm.lattice.spacetime.d3q6 import D3Q6SpaceTimeLatticeBuilder
@@ -43,10 +43,9 @@ class SpaceTimeLattice(Lattice):
                                 There are no ancilla qubits for the Space-Time QLBM.
     :attr:`num_total_qubits`    The total number of qubits required for the quantum circuit to simulate the lattice.
                                 This is the sum of the number of grid, velocity, and ancilla qubits.
-    :attr:`registers`           A ``Tuple[qiskit.QuantumRegister, ...]`` that holds registers responsible for specific operations of the QLBM algorithm.
-    :attr:`circuit`             An empty ``qiskit.QuantumCircuit`` with labeled registers that quantum components use as a base.
-                                Each quantum component that is parameterized by a ``Lattice`` makes a copy of this quantum circuit
-                                to which it appends its designated logic.
+    :attr:`registers`           A ``Tuple[Register, ...]`` that holds registers responsible for specific operations of the QLBM algorithm.
+    :attr:`n_qubits`            The total number of qubits across all lattice registers.
+                                Quantum components parameterized by a ``Lattice`` size their circuits from it.
     :attr:`blocks`              A ``Dict[str, List[Block]]`` that contains all of the :class:`.Block`\ s encoding the solid geometry of the lattice.
                                 The key of the dictionary is the specific kind of boundary condition of the obstacle (i.e., ``"bounceback"`` or ``"specular"``).
     :attr:`logger`              The performance logger, by default ``getLogger("qlbm")``.
@@ -93,10 +92,9 @@ class SpaceTimeLattice(Lattice):
             "geometry": []
         }
 
-    The register setup can be visualized by constructing a lattice object:
+    The register setup can be inspected by constructing a lattice object:
 
-    .. plot::
-        :include-source:
+    .. code-block:: python
 
         from qlbm.lattice import SpaceTimeLattice
 
@@ -105,8 +103,8 @@ class SpaceTimeLattice(Lattice):
             lattice_data={
                 "lattice": {"dim": {"x": 4, "y": 8}, "velocities": "D2Q4"},
                 "geometry": [],
-            }
-        ).circuit.draw("mpl")
+            },
+        ).registers
     """
 
     def __init__(
@@ -149,8 +147,7 @@ class SpaceTimeLattice(Lattice):
         (self.grid_registers, self.velocity_registers, self.ancilla_registers) = (
             temporary_registers
         )
-        self.registers = tuple(flatten(temporary_registers))
-        self.circuit = QuantumCircuit(*self.registers)
+        self.registers = assign_offsets(flatten(temporary_registers))
         (
             self.extreme_point_indices,
             self.intermediate_point_indices,
@@ -390,7 +387,7 @@ class SpaceTimeLattice(Lattice):
         return sequences
 
     @override
-    def get_registers(self) -> Tuple[List[QuantumRegister], ...]:
+    def get_registers(self) -> Tuple[List[Register], ...]:
         return self.properties.get_registers()
 
     def is_inside_an_obstacle(self, gridpoint: Tuple[int, ...]) -> bool:
@@ -469,7 +466,6 @@ class SpaceTimeLattice(Lattice):
 
         return adjusted_bounds
 
-
     @override
     def create_result(self, output_directory, output_file_name):
         from qlbm.infra.result import SpaceTimeResult
@@ -484,4 +480,4 @@ class SpaceTimeLattice(Lattice):
 
     @override
     def has_multiple_geometries(self):
-        return False # multiple geometries unsupported for STQBM
+        return False  # multiple geometries unsupported for STQBM

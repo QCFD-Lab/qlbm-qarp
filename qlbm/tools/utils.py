@@ -1,19 +1,11 @@
 """General qlbm utilities."""
 
-import re
 from enum import Enum
-from math import pi
 from operator import ge, gt, le, lt
 from pathlib import Path
 from typing import Callable, List, Tuple
 
 import numpy as np
-from pytket.extensions.qiskit import qiskit_to_tk
-from pytket.extensions.qulacs import tk_to_qulacs
-from qiskit import QuantumCircuit as QiskitQC
-from qiskit.qasm2 import dumps
-from qulacs import QuantumCircuit as QulacsQC
-from qulacs.converter import convert_QASM_to_qulacs_circuit
 
 from ..tools.exceptions import LatticeException
 
@@ -28,25 +20,6 @@ def create_directory_and_parents(directory: str) -> None:
         The fully specified location of the directory.
     """
     Path(directory).mkdir(parents=True, exist_ok=True)
-
-
-def qiskit_circuit_to_qulacs(circuit: QiskitQC) -> QulacsQC:
-    """Converts a Qiskit QuantumCircuit to a Qulacs QuantumCircuit.
-
-    Conversion takes place by first converting the Qiskit circuit into
-    its OpenQASM 2 representation. This representation is then parsed
-    into a Qulacs circuit.
-
-    Parameters
-    ----------
-    circuit (QiskitQC): The Qiskit QuantumCircuit to convert.
-
-    Returns
-    -------
-    QulacsQC: The Qulacs counterpart to the QuantumCircuit.
-    """
-    formatted_qulacs_qasm_circuit = evaluate_qasm_rotation_string(dumps(circuit))
-    return convert_QASM_to_qulacs_circuit(formatted_qulacs_qasm_circuit.split("\n"))
 
 
 def flatten(xss):
@@ -85,70 +58,22 @@ def bit_value(num: int, position: int) -> int:
     return (num & (1 << position)) >> position
 
 
-def evaluate_qasm_rotation_string(qasm_repr: str) -> str:
-    """
-    Evaluate the symbolic values in a given qasm representation numerically.
-
-    Used a hacky way to convert between Qiskit and Qulacs representations.
-
-    Parameters
-    ----------
-    qasm_repr : str
-        A QASM string possibly containing symbolic values.
-
-    Returns
-    -------
-    str
-        The QASM string with symbolic values evaluated numerically.
-    """
-    return re.sub(
-        r"(r[xyz]|p)(\([-]?[\d]*[*]?pi[/]?[\d]*\))",  # Replace all  (r[xyz]/p(...)) rotation matrix notations by evaluating occurrences of pi
-        lambda m: f"{m.group(1)}({str(eval(m.group(2).replace('pi', str(pi))))})",  # Replace pi by the numeric value and evaluate
-        qasm_repr,
-    )
-
-
-def get_circuit_properties(circuit: QiskitQC | QulacsQC) -> Tuple[str, int, int, int]:
+def get_circuit_properties(circuit) -> Tuple[str, int, int, int]:
     """Gets the static properties of a quantum circuit.
 
     Args:
-        circuit (QiskitQC | QulacsQC): The circuit for which to compile the properties.
+        circuit: A built qarp ``Block``.
 
     Returns
     -------
         Tuple[str, int, int, int]: The circuit's platform, the number of qubits, depth, and number of gates of the circuit.
     """
-    if isinstance(circuit, QiskitQC):
-        return (
-            "QISKIT",
-            int(circuit.num_qubits),
-            int(circuit.depth()),
-            sum(circuit.count_ops().values()),
-        )
-    else:
-        return (
-            "QULACS",
-            circuit.get_qubit_count(),
-            circuit.calculate_depth(),
-            circuit.get_gate_count(),
-        )
-
-
-def qiskit_to_qulacs(circuit: QiskitQC) -> QulacsQC:
-    """
-    Converts a Qiskit quantum circuit to a Qulacs quantum circuit equivalent using Tket.
-
-    Parameters
-    ----------
-    circuit : QiskitQC
-        An arbitrary Qiskit circuit.
-
-    Returns
-    -------
-    QulacsQC
-        The equivalent Qulacs circuit, if compatible.
-    """
-    return tk_to_qulacs(qiskit_to_tk(circuit))
+    return (
+        "QARP",
+        circuit.n_qubits,
+        circuit.depth(),
+        len(circuit.flatten()),
+    )
 
 
 def dimension_letter(dim: int) -> str:

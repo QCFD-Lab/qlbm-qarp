@@ -26,20 +26,26 @@ def test_lattice_exception_no_velocities():
         excinfo.value
     )
 
+
 def test_lattice_exception_mismatched_velocities_and_dims():
     with pytest.raises(LatticeException) as excinfo:
         ABLattice({"lattice": {"dim": {"x": 64}, "velocities": "D2Q4"}})
-    
-    assert "Velocity specification dimensions (2) do not match lattice dimensions (1)." == str(excinfo.value)
+
+    assert (
+        "Velocity specification dimensions (2) do not match lattice dimensions (1)."
+        == str(excinfo.value)
+    )
 
 
 def test_lattice_exception_unsupported_discretization():
     with pytest.raises(LatticeException) as excinfo:
         ABLattice({"lattice": {"dim": {"x": 64}, "velocities": {"x": 4}}})
 
-    assert 'Discretization LatticeDiscretization.CFLDISCRETIZATION is not supported.' == str(
-        excinfo.value
+    assert (
+        "Discretization LatticeDiscretization.CFLDISCRETIZATION is not supported."
+        == str(excinfo.value)
     )
+
 
 def test_lattice_exception_mismatched_bad_dimensions():
     with pytest.raises(LatticeException) as excinfo:
@@ -56,6 +62,7 @@ def test_lattice_exception_mismatched_bad_dimensions():
         "Lattice has a number of grid points that is not divisible by 2 in dimension y."
         == str(excinfo.value)
     )
+
 
 def test_lattice_exception_mismatched_bad_object_dimensions():
     with pytest.raises(LatticeException) as excinfo:
@@ -80,4 +87,3 @@ def test_lattice_exception_mismatched_bad_object_dimensions():
     assert "Obstacle 1 has 3 dimensions whereas the lattice has 2." == str(
         excinfo.value
     )
-        

@@ -2,39 +2,41 @@
 
 from abc import ABC, abstractmethod
 from logging import Logger, getLogger
+from typing import Dict
 
-from qiskit import QuantumCircuit as QiskitQC
-from qiskit.quantum_info import Statevector
-from qiskit.result import Counts
-from qiskit_aer.backends.aerbackend import AerBackend
-from qulacs import QuantumCircuit as QulacsQC
+import numpy as np
+import qarpx as qx
 
 from qlbm.infra.compiler import CircuitCompiler
 from qlbm.lattice import Lattice
 
 
 class Reinitializer(ABC):
-    """
+    r"""
     Base class for all algorithm-specific reinitializers.
 
-    A ``Reinitializer`` uses the information at information available
+    A ``Reinitializer`` uses the information available
     at the end of the simulation of 1 or more time steps
-    to new initial conditions for the following time steps.
+    to derive new initial conditions for the following time steps.
     Such information includes the quantum state and counts extracted from it.
-    Novel initial conditions are inferred automatically based on
-    the requirements of the algorithm under simulation, and
-    an on-the-fly :class:`.CircuitCompiler` automatically converts
-    them to the appropriate format to enable compatibility with the already transpiled circuits.
     For convenience, all reinitializers provide a uniform :meth:`reinitialize` interface,
     which takes as input both the quantum state and the counts performed during simulation.
     Its implementation may choose to ignore one of those inputs, depending on the
     algorithm and implementation.
 
+    The return value discriminates the two transition mechanisms the runner
+    supports, and callers must branch on its type:
+
+    * an ``np.ndarray`` is the LSB-indexed statevector the next time step is
+      seeded with (state carried by injection, no circuit needed);
+    * a qarp ``Block`` is an initial conditions circuit the next time step
+      applies starting from :math:`\ket{0}^{\otimes n}`.
+
     =========================== ======================================================================
     Attribute                   Summary
     =========================== ======================================================================
     :attr:`lattice`             The :class:`.Lattice` of the simulated system.
-    :attr:`compiler`            The compiler that converts the novel initial conditions circuits.
+    :attr:`compiler`            The compiler that lowers novel initial conditions circuits.
     :attr:`logger`              The performance logger, by default ``getLogger("qlbm")``
     =========================== ======================================================================
     """
@@ -54,29 +56,30 @@ class Reinitializer(ABC):
     @abstractmethod
     def reinitialize(
         self,
-        statevector: Statevector,
-        counts: Counts,
-        backend: AerBackend | None,
+        statevector: np.ndarray,
+        counts: Dict[int, float],
+        n_cbits: int | None = None,
         optimization_level: int = 0,
-    ) -> QiskitQC | QulacsQC:
+    ) -> "qx.Block | np.ndarray":
         """
-        Parses the input statevector and counts, constructs a new initial conditions circuit, and transpiles it to the given backend.
+        Parses the input statevector and counts and derives the initial conditions of the next time step.
 
         Parameters
         ----------
-        statevector : Statevector
-            The statevector at the end of the simulation.
-        counts : Counts
-            The counts extracted from the statevector at the end of the simulation.
-        backend : AerBackend | None
-            The backend to compile to.k
+        statevector : np.ndarray
+            The LSB-indexed statevector at the end of the simulated time step.
+        counts : Dict[int, float]
+            The counts extracted from the statevector, keyed by LSB classical-bit integer.
+        n_cbits : int | None, optional
+            The width of the classical register the counts were sampled into, by default None.
         optimization_level : int, optional
             The optimization level to pass to the circuit compiler, by default 0.
 
         Returns
         -------
-        QiskitQC | QulacsQC
-            The compiled initial conditions circuit to use for the next time step.
+        qx.Block | np.ndarray
+            Either the statevector to seed the next time step with, or the
+            initial conditions block to apply from the all-zero state.
         """
         pass
 
@@ -84,8 +87,6 @@ class Reinitializer(ABC):
     def requires_statevector(self) -> bool:
         """
         Whether the reinitializer requires a copy of the statevector.
-
-        Omitting the statevector may significantly increase the performance of reinitialization.
 
         Returns
         -------

@@ -1,23 +1,18 @@
 """Quantum circuits used for measurement in the :class:`ABQLBM` algorithm."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
-
-from qiskit import ClassicalRegister, QuantumCircuit
 from typing_extensions import override
 
-from qlbm.components.base import LBMPrimitive
+from qlbm.components.base import LatticePrimitive
 from qlbm.lattice.lattices.ab_lattice import ABLattice
 
 
-class ABGridMeasurement(LBMPrimitive):
+class ABGridMeasurement(LatticePrimitive):
     """
     Grid measurement for the :class:`ABQLBM` algorithm.
 
     Example usage:
 
-    .. plot::
-        :include-source:
+    .. code-block:: python
 
         from qlbm.components.ab import ABGridMeasurement
         from qlbm.lattice import ABLattice
@@ -29,57 +24,24 @@ class ABGridMeasurement(LBMPrimitive):
             }
         )
 
-        ABGridMeasurement(lattice).draw("mpl")
+        ABGridMeasurement(lattice).plot()
 
     """
 
-    def __init__(
-        self,
-        lattice: ABLattice,
-        measure_velocity_qubits: bool = False,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(logger)
-        self.lattice = lattice
-        self.measure_velocity_qubits = measure_velocity_qubits
+    lattice: ABLattice
 
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+    def __init__(
+        self, lattice: ABLattice, measure_velocity_qubits: bool = False
+    ) -> None:
+        self.measure_velocity_qubits = measure_velocity_qubits
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = self.lattice.circuit.copy()
-        circuit.add_register(
-            ClassicalRegister(
-                self.lattice.num_grid_qubits
-                + (
-                    self.lattice.num_velocity_qubits
-                    if self.measure_velocity_qubits
-                    else 0
-                )
-            )
+    def build_vanilla(self) -> None:
+        qubits_to_measure = self.lattice.grid_index() + (
+            self.lattice.velocity_index() if self.measure_velocity_qubits else []
         )
-
-        circuit.measure(
-            self.lattice.grid_index()
-            + (self.lattice.velocity_index() if self.measure_velocity_qubits else []),
-            list(
-                range(
-                    self.lattice.num_grid_qubits
-                    + (
-                        self.lattice.num_velocity_qubits
-                        if self.measure_velocity_qubits
-                        else 0
-                    )
-                )
-            ),
-        )
-
-        return circuit
+        self.measure([(qubit, cbit) for cbit, qubit in enumerate(qubits_to_measure)])
 
     @override
     def __str__(self) -> str:

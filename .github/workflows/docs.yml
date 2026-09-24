@@ -32,7 +32,7 @@ jobs:
 
       - name: Install qlbm
         run: |
-          python -m pip install -U .[cpu,dev,docs]
+          python -m pip install -U .[dev,docs]
 
       - name: Build Docs
         run: |

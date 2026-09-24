@@ -1,14 +1,13 @@
 """Permutations of states belonging to equivalence classes, based on the computational basis state encoding."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
-from typing import override
-
-from qiskit import QuantumCircuit
+from typing import List, Tuple, override
 
 from qlbm.components.base import LBMPrimitive
 from qlbm.lattice.eqc.eqc import EquivalenceClass
-from qlbm.lattice.spacetime.properties_base import LatticeDiscretization
+from qlbm.lattice.spacetime.properties_base import (
+    LatticeDiscretization,
+    LatticeDiscretizationProperties,
+)
 from qlbm.tools.exceptions import CircuitException
 
 
@@ -40,7 +39,7 @@ class EQCPermutation(LBMPrimitive):
         ).generate_equivalence_classes()
 
         # Select one at random and draw its circuit
-        EQCPermutation(eqcs.pop(), inverse=False).circuit.draw("mpl")
+        EQCPermutation(eqcs.pop(), inverse=False).plot()
 
     """
 
@@ -55,121 +54,86 @@ class EQCPermutation(LBMPrimitive):
     """
 
     def __init__(
-        self,
-        equivalence_class: EquivalenceClass,
-        inverse: bool = False,
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(logger)
+        self, equivalence_class: EquivalenceClass, inverse: bool = False
+    ) -> None:
         self.equivalence_class = equivalence_class
         self.inverse = inverse
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
+        super().__init__(
+            LatticeDiscretizationProperties.get_num_velocities(
+                equivalence_class.discretization
+            )
         )
 
     @override
-    def create_circuit(self):
-        if self.equivalence_class.discretization == LatticeDiscretization.D1Q3:
-            return self.__create_circuit_d1q3()
-        elif self.equivalence_class.discretization == LatticeDiscretization.D2Q4:
-            return self.__create_circuit_d2q4()
-        elif self.equivalence_class.discretization == LatticeDiscretization.D3Q6:
-            return self.__create_circuit_d3q6()
-        else:
-            raise CircuitException(
-                f"Collision not yet supported for discretization {self.equivalence_class.discretization}."
-            )
+    def build_vanilla(self) -> None:
+        # Every gate is self-inverse, so the inverse permutation is the reversed sequence.
+        gates = self.__gates()
+        for gate, *qubits in reversed(gates) if self.inverse else gates:
+            getattr(self, gate)(*qubits)
 
-    def __create_circuit_d1q3(self):
-        circuit = QuantumCircuit(3)
+    def __gates(self) -> List[Tuple]:
+        match self.equivalence_class.discretization:
+            case LatticeDiscretization.D1Q3:
+                return [("cx", 0, 1), ("cx", 0, 2)]
+            case LatticeDiscretization.D2Q4:
+                return [("cx", 1, 2), ("cx", 0, 1), ("cx", 0, 3)]
+            case LatticeDiscretization.D3Q6:
+                return self.__gates_d3q6()
+            case _:
+                raise CircuitException(
+                    f"Collision not yet supported for discretization {self.equivalence_class.discretization}."
+                )
 
-        if not self.inverse:
-            circuit.cx(0, 1)
-            circuit.cx(0, 2)
-        else:
-            circuit.cx(0, 2)
-            circuit.cx(0, 1)
-
-        return circuit
-
-    def __create_circuit_d2q4(self):
-        circuit = QuantumCircuit(4)
-
-        if not self.inverse:
-            circuit.cx(1, 2)
-            circuit.cx(0, 1)
-            circuit.cx(0, 3)
-        else:
-            circuit.cx(0, 3)
-            circuit.cx(0, 1)
-            circuit.cx(1, 2)
-
-        return circuit
-
-    def __create_circuit_d3q6(self):
-        circuit = QuantumCircuit(6)
-
+    def __gates_d3q6(self) -> List[Tuple]:
         match self.equivalence_class.id():
             case (2, [0, 0, 0]):
-                circuit.cx(2, 3)
-                circuit.cx(5, 4)
-
-                circuit.cx(1, 2)
-                circuit.cx(1, 3)
-                circuit.cx(1, 5)
-
-                circuit.cx(0, 2)
-                circuit.cx(0, 4)
-                circuit.cx(0, 5)
+                return [
+                    ("cx", 2, 3),
+                    ("cx", 5, 4),
+                    ("cx", 1, 2),
+                    ("cx", 1, 3),
+                    ("cx", 1, 5),
+                    ("cx", 0, 2),
+                    ("cx", 0, 4),
+                    ("cx", 0, 5),
+                ]
             case (4, [0, 0, 0]):
-                circuit.ccx(4, 5, 3)
-                circuit.ccx(0, 2, 4)
-                circuit.ccx(0, 1, 2)
-                circuit.ccx(0, 1, 5)
-                circuit.x(1)
-                circuit.cx(1, 0)
+                return [
+                    ("ccx", 4, 5, 3),
+                    ("ccx", 0, 2, 4),
+                    ("ccx", 0, 1, 2),
+                    ("ccx", 0, 1, 5),
+                    ("x", 1),
+                    ("cx", 1, 0),
+                ]
             case (3, [1, 0, 0]):
-                circuit.cx(0, 3)
-                circuit.cx(1, 2)
-                circuit.ccx(0, 5, 4)
-                circuit.cx(1, 5)
-                circuit.swap(0, 1)
+                return [
+                    ("cx", 0, 3),
+                    ("cx", 1, 2),
+                    ("ccx", 0, 5, 4),
+                    ("cx", 1, 5),
+                    ("swap", 0, 1),
+                ]
             case (3, [-1, 0, 0]):
-                circuit.cx(1, 2)
-                circuit.cx(5, 4)
-                circuit.cx(1, 5)
-                circuit.x(0)
-                circuit.swap(0, 1)
+                return [
+                    ("cx", 1, 2),
+                    ("cx", 5, 4),
+                    ("cx", 1, 5),
+                    ("x", 0),
+                    ("swap", 0, 1),
+                ]
             case (3, [0, 1, 0]):
-                circuit.cx(0, 2)
-                circuit.cx(5, 3)
-                circuit.cx(0, 5)
-                circuit.x(4)
+                return [("cx", 0, 2), ("cx", 5, 3), ("cx", 0, 5), ("x", 4)]
             case (3, [0, -1, 0]):
-                circuit.cx(5, 3)
-                circuit.cx(0, 2)
-                circuit.cx(0, 5)
-                circuit.x(1)
+                return [("cx", 5, 3), ("cx", 0, 2), ("cx", 0, 5), ("x", 1)]
             case (3, [0, 0, 1]):
-                circuit.cx(1, 3)
-                circuit.cx(0, 1)
-                circuit.cx(0, 4)
-                circuit.x(5)
+                return [("cx", 1, 3), ("cx", 0, 1), ("cx", 0, 4), ("x", 5)]
             case (3, [0, 0, -1]):
-                circuit.cx(0, 1)
-                circuit.cx(4, 3)
-                circuit.cx(0, 4)
-                circuit.x(2)
+                return [("cx", 0, 1), ("cx", 4, 3), ("cx", 0, 4), ("x", 2)]
             case _:
                 raise CircuitException(
                     f"Collision not yet supported for discretization {self.equivalence_class.discretization} and equivalence class {self.equivalence_class.id()}."
                 )
-
-        return circuit if not self.inverse else circuit.inverse()
 
     @override
     def __str__(self) -> str:

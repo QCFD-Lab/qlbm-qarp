@@ -9,17 +9,15 @@ obstacles.  Up to 4 geometry sets are tested, covering all feasible
 combinations of bounce-back (BB) and specular (SR) boundary conditions.
 """
 
+import numpy as np
 import pytest
-from qiskit import QuantumCircuit, transpile
-from qiskit.quantum_info import Statevector
-from qiskit_aer import AerSimulator
+import qarpx as qx
 
 from qlbm.components.ab.ab import ABQLBM
 from qlbm.components.ab.reflection.standard_reflection import ABReflectionOperator
 from qlbm.lattice import ABLattice
 from qlbm.tools.exceptions import CircuitException
-
-_SIMULATOR = AerSimulator(method="statevector")
+from test.builders import CircuitBuilder
 
 # ──────────────────────────────────────────────────────────────────────────────
 # D2Q9 velocity data
@@ -70,13 +68,10 @@ _FAR_OUTSIDE = (0, 4)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _simulate_statevector(circuit: QuantumCircuit) -> Statevector:
-    """Run *circuit* on AerSimulator and return the final statevector."""
-    qc = circuit.copy()
-    qc.save_statevector()
-    tqc = transpile(qc, _SIMULATOR, optimization_level=0)
-    result = _SIMULATOR.run(tqc).result()
-    return result.data(0)["statevector"]
+def _simulate_statevector(builder) -> np.ndarray:
+    """Final statevector of a circuit builder, LSB-indexed."""
+    block = builder.build()
+    return np.asarray(qx.QarpSimulator().statevector(block.flatten(), block.n_qubits))
 
 
 def _make_multi_geometry_lattice(bc_types):
@@ -118,7 +113,7 @@ def _make_multi_geometry_lattice(bc_types):
 
 def _encode_basis_state(lattice, x, y, v, marker=0):
     """Encode ``|x>|y>|v>|marker>|0_ancillae>``."""
-    circuit = lattice.circuit.copy()
+    circuit = CircuitBuilder(lattice.n_qubits)
     for i, q in enumerate(lattice.grid_index(0)):
         if (x >> i) & 1:
             circuit.x(q)
@@ -154,7 +149,7 @@ def _extract_state(lattice, sv):
     physical = {}  # type: ignore
     dirty = False
 
-    for idx, amp in enumerate(sv.data):
+    for idx, amp in enumerate(sv):
         if abs(amp) < 1e-10:
             continue
 
@@ -182,7 +177,8 @@ def _assert_reflection_correct(lattice, op_circuit, x, y, v, marker, bc_type):
     4. The velocity is reflected according to *bc_type*.
     """
     prep = _encode_basis_state(lattice, x, y, v, marker)
-    sv = _simulate_statevector(prep.compose(op_circuit))
+    prep.compose(op_circuit)
+    sv = _simulate_statevector(prep)
     phys, dirty = _extract_state(lattice, sv)
 
     tag = f"(x={x}, y={y}, v={v}, marker={marker}, bc={bc_type})"
@@ -197,7 +193,8 @@ def _assert_reflection_correct(lattice, op_circuit, x, y, v, marker, bc_type):
 def _assert_no_interaction(lattice, op_circuit, x, y, v, marker):
     """Assert a far-outside particle is unaffected."""
     prep = _encode_basis_state(lattice, x, y, v, marker)
-    sv = _simulate_statevector(prep.compose(op_circuit))
+    prep.compose(op_circuit)
+    sv = _simulate_statevector(prep)
     phys, dirty = _extract_state(lattice, sv)
 
     tag = f"far_outside (x={x}, y={y}, v={v}, marker={marker})"
@@ -209,9 +206,9 @@ def _assert_no_interaction(lattice, op_circuit, x, y, v, marker):
         v,
         marker,
     ) in phys, f"State changed for {tag}: got {list(phys.keys())}"
-    assert abs(phys[(x, y, v, marker)]) == pytest.approx(
-        1.0, abs=1e-8
-    ), f"Amplitude not 1.0 for {tag}"
+    assert abs(phys[(x, y, v, marker)]) == pytest.approx(1.0, abs=1e-8), (
+        f"Amplitude not 1.0 for {tag}"
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -277,7 +274,7 @@ class TestMultiGeometryReflection:
         for geom_idx, bc in enumerate(bc_types):
             x, y, v = _ENTERING_CASES[geom_idx]
             _assert_reflection_correct(
-                lattice, op.circuit, x, y, v, marker=geom_idx, bc_type=bc
+                lattice, op, x, y, v, marker=geom_idx, bc_type=bc
             )
 
     @pytest.mark.parametrize("bc_types", _COMBINATIONS)
@@ -288,7 +285,7 @@ class TestMultiGeometryReflection:
 
         fx, fy = _FAR_OUTSIDE
         for geom_idx in range(len(bc_types)):
-            _assert_no_interaction(lattice, op.circuit, fx, fy, v=0, marker=geom_idx)
+            _assert_no_interaction(lattice, op, fx, fy, v=0, marker=geom_idx)
 
     @pytest.mark.parametrize("bc_types", _COMBINATIONS)
     def test_geometry_isolation(self, bc_types):
@@ -299,7 +296,7 @@ class TestMultiGeometryReflection:
         # Use geometry 0's entering case but with marker 1
         x, y, v = _ENTERING_CASES[0]
         if len(bc_types) > 1:
-            _assert_no_interaction(lattice, op.circuit, x, y, v, marker=1)
+            _assert_no_interaction(lattice, op, x, y, v, marker=1)
 
 
 class TestAgnosticBCsDispatch:
@@ -327,10 +324,10 @@ class TestAgnosticBCsDispatch:
             }
         )
         algo = ABQLBM(lattice, use_agnostic_bcs=True)
-        assert algo.circuit is not None
+        assert algo is not None
 
     def test_standard_with_multi_geometry_works(self):
         """Standard BCs with multiple geometries succeeds."""
         lattice = _make_multi_geometry_lattice(["bounceback", "specular"])
         algo = ABQLBM(lattice, use_agnostic_bcs=False)
-        assert algo.circuit is not None
+        assert algo is not None

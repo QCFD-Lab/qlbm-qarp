@@ -1,5 +1,14 @@
+"""End-to-end execution of the MS and Space-Time algorithms through the runner.
+
+The tests parametrize on ``statevector_snapshots``, which picks between the
+O(N) carried-state loop and the O(N^2) re-run-from-zero loop.
+"""
+
+import os
+
+import numpy as np
 import pytest
-from qiskit_aer import AerSimulator
+from qarp import EXACT
 
 from qlbm.components.common import EmptyPrimitive
 from qlbm.components.ms import (
@@ -14,16 +23,19 @@ from qlbm.components.spacetime import (
 from qlbm.components.spacetime.initial.pointwise import (
     PointWiseSpaceTimeInitialConditions,
 )
-from qlbm.infra.runner import QiskitRunner
+from qlbm.infra.result.base import QBMResult
+from qlbm.infra.runner import QarpRunner
 from qlbm.infra.runner.simulation_config import SimulationConfig
 from qlbm.lattice import MSLattice
 from qlbm.lattice.lattices.spacetime_lattice import SpaceTimeLattice
+from qlbm.tools.exceptions import ExecutionException
 
-OUTPUT_DIR = "test/artifacts"
+NUM_STEPS = 2
 
 
 @pytest.fixture
 def collisionless_circuits():
+    """The four MS components on a 2D 8x8 lattice with one specular obstacle."""
     lattice = MSLattice("test/resources/symmetric_2d_1_obstacle.json")
 
     return {
@@ -37,7 +49,17 @@ def collisionless_circuits():
 
 @pytest.fixture
 def spacetime_circuits():
-    lattice = SpaceTimeLattice(1, "test/resources/symmetric_2d_1_obstacle_q4.json")
+    """The four Space-Time components on a 1D D1Q2 lattice with a bounceback obstacle."""
+    # D2Q4 needs >= 22 qubits for its neighbourhood registers, so the case is
+    # D1Q2 with a bounceback obstacle: 9 qubits, and it exercises the
+    # reflection path.
+    lattice = SpaceTimeLattice(
+        1,
+        {
+            "lattice": {"dim": {"x": 8}, "velocities": "D1Q2"},
+            "geometry": [{"shape": "cuboid", "x": [3, 4], "boundary": "bounceback"}],
+        },
+    )
 
     return {
         "initial_conditions": PointWiseSpaceTimeInitialConditions(lattice),
@@ -48,70 +70,90 @@ def spacetime_circuits():
     }
 
 
-@pytest.mark.parametrize("statevector_sampling", [True, False])
-def test_collisionless_qiskit_execution(
-    collisionless_circuits,
-    statevector_sampling,
-):
+def build_config(circuits, shots):
+    """A validated, prepared config from a circuits fixture."""
     cfg = SimulationConfig(
-        initial_conditions=collisionless_circuits["initial_conditions"],
-        algorithm=collisionless_circuits["algorithm"],
-        postprocessing=collisionless_circuits["postprocessing"],
-        measurement=collisionless_circuits["measurement"],
-        target_platform="QISKIT",
-        compiler_platform="QISKIT",
+        initial_conditions=circuits["initial_conditions"],
+        algorithm=circuits["algorithm"],
+        postprocessing=circuits["postprocessing"],
+        measurement=circuits["measurement"],
         optimization_level=0,
-        execution_backend=AerSimulator(method="statevector"),
-        sampling_backend=AerSimulator(method="statevector")
-        if statevector_sampling
-        else None,
-        statevector_sampling=statevector_sampling,
+        shots=shots,
     )
-
     cfg.validate()
     cfg.prepare_for_simulation()
+    return cfg
 
-    runner = QiskitRunner(cfg, collisionless_circuits["lattice"])
 
-    # Simulate the circuits using both snapshots and sampling
-    runner.run(
-        2,  # Number of time steps
+@pytest.fixture
+def recorded_fields(monkeypatch):
+    """The decoded field of every time step, in the order the runner saves them."""
+    fields = []
+    save = QBMResult.save_timestep_array
+
+    def record(self, numpy_res, timestep, *args, **kwargs):
+        fields.append(np.array(numpy_res, dtype=float))
+        return save(self, numpy_res, timestep, *args, **kwargs)
+
+    monkeypatch.setattr(QBMResult, "save_timestep_array", record)
+    return fields
+
+
+def assert_visualization_artifacts(output_directory: str, num_steps: int):
+    """One Paraview frame per time step, plus the serialized lattice."""
+    assert os.path.isfile(f"{output_directory}/lattice.json")
+    for step in range(num_steps + 1):
+        assert os.path.isfile(f"{output_directory}/paraview/step_{step:03d}.vti")
+
+
+@pytest.mark.parametrize("statevector_snapshots", [True, False])
+def test_collisionless_execution(
+    collisionless_circuits, statevector_snapshots, recorded_fields, tmp_path
+):
+    """Every shot lands in the fluid: none inside the specular obstacle, none lost.
+
+    The obstacle of ``symmetric_2d_1_obstacle.json`` spans x in [5, 6] and
+    y in [1, 2]; the recorded fields index ``[y][x]``.
+    """
+    cfg = build_config(collisionless_circuits, shots=2048)
+    runner = QarpRunner(cfg, collisionless_circuits["lattice"], seed=11)
+
+    output_directory = str(tmp_path / f"collisionless-{int(statevector_snapshots)}")
+    result = runner.run(
+        NUM_STEPS,
         2048,  # Number of shots per time step
-        f"{OUTPUT_DIR}/collisionless-sampling-{int(statevector_sampling)}",
-        statevector_snapshots=True,
+        output_directory,
+        statevector_snapshots=statevector_snapshots,
     )
 
+    assert result is not None
+    assert_visualization_artifacts(output_directory, NUM_STEPS)
+    assert len(recorded_fields) == NUM_STEPS + 1
+    for field in recorded_fields:
+        assert field.sum() == 2048
+        assert field[1:3, 5:7].sum() == 0
 
-# Qulacs is not currently supported due to qiskit 2.0
-# @pytest.mark.parametrize("statevector_sampling", [True, False])
-# def test_spacetime_qiskit_execution(
-#     spacetime_circuits,
-#     statevector_sampling,
-# ):
-#     cfg = SimulationConfig(
-#         initial_conditions=spacetime_circuits["initial_conditions"],
-#         algorithm=spacetime_circuits["algorithm"],
-#         postprocessing=spacetime_circuits["postprocessing"],
-#         measurement=spacetime_circuits["measurement"],
-#         target_platform="QISKIT",
-#         compiler_platform="QISKIT",
-#         optimization_level=0,
-#         execution_backend=AerSimulator(method="statevector"),
-#         sampling_backend=AerSimulator(method="statevector")
-#         if statevector_sampling
-#         else None,
-#         statevector_sampling=statevector_sampling,
-#     )
 
-#     cfg.validate()
-#     cfg.prepare_for_simulation()
+def test_spacetime_execution(spacetime_circuits, recorded_fields, tmp_path):
+    """The Space-Time lattice gas conserves its particle number across steps."""
+    cfg = build_config(spacetime_circuits, shots=EXACT)
+    runner = QarpRunner(cfg, spacetime_circuits["lattice"], seed=13)
 
-#     runner = QiskitRunner(cfg, spacetime_circuits["lattice"])
+    output_directory = str(tmp_path / "spacetime")
+    result = runner.run(NUM_STEPS, EXACT, output_directory, statevector_snapshots=True)
 
-#     # Simulate the circuits using both snapshots and sampling
-#     runner.run(
-#         2,  # Number of time steps
-#         512,  # Number of shots per time step
-#         f"{OUTPUT_DIR}/spacetime-sampling-{int(statevector_sampling)}",
-#         statevector_snapshots=True,
-#     )
+    assert result is not None
+    assert_visualization_artifacts(output_directory, NUM_STEPS)
+    totals = [field.sum() for field in recorded_fields]
+    assert len(totals) == NUM_STEPS + 1
+    assert totals[0] > 0
+    assert totals == pytest.approx([totals[0]] * len(totals))
+
+
+def test_spacetime_rejects_the_rerun_loop(spacetime_circuits, tmp_path):
+    """Space-Time re-encodes between steps, which replaying from zero would skip."""
+    cfg = build_config(spacetime_circuits, shots=512)
+    runner = QarpRunner(cfg, spacetime_circuits["lattice"], seed=13)
+
+    with pytest.raises(ExecutionException, match="statevector_snapshots=True"):
+        runner.run(NUM_STEPS, 512, str(tmp_path), statevector_snapshots=False)

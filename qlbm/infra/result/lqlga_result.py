@@ -53,39 +53,51 @@ class LQLGAResult(QBMResult):
     @override
     def save_timestep_counts(
         self,
-        counts: Dict[str, float],
+        counts: Dict[int, float],
         timestep: int,
         create_vis: bool = True,
         save_array: bool = False,
+        n_cbits: int | None = None,
     ):
+        if n_cbits is None:
+            n_cbits = self.lattice.num_base_qubits
+
         total_counts = sum(counts.values())
+        num_vel = self.lattice.num_velocities_per_point
+        num_gridpoints = self.lattice.num_base_qubits // num_vel
+        channel_masses = LatticeDiscretizationProperties.get_channel_masses(
+            self.lattice.discretization
+        )
+
         if self.lattice.num_dims == 1:
             # The second dimension is a dirty rendering trick for VTK and ParaView
             count_history = np.zeros((self.lattice.num_gridpoints[0] + 1, 2))
-            channel_masses = LatticeDiscretizationProperties.get_channel_masses(
-                self.lattice.discretization
+        else:
+            count_history = np.zeros(
+                tuple(gridpoints + 1 for gridpoints in self.lattice.num_gridpoints)
             )
-            for count in counts:
-                count_inverse = count[::-1]
-                num_vel = self.lattice.num_velocities_per_point
-                for gp in range(
-                    self.lattice.num_base_qubits
-                    // self.lattice.num_velocities_per_point
-                ):
-                    mass = np.dot(
-                        np.array(
-                            list(
-                                map(
-                                    lambda x: float(x),
-                                    count_inverse[gp * num_vel : (gp + 1) * num_vel],
-                                )
-                            )
-                        ),
-                        channel_masses,
-                    )
-                    pops = counts[count] * mass / total_counts
+
+        for key, value in counts.items():
+            # Bit c of the key is the outcome of classical bit c, so this list
+            # is the per-velocity-channel occupancy in gridpoint-major order.
+            occupancy = [(key >> c) & 1 for c in range(n_cbits)]
+            for gp in range(num_gridpoints):
+                mass = np.dot(
+                    np.array(
+                        [
+                            float(bit)
+                            for bit in occupancy[gp * num_vel : (gp + 1) * num_vel]
+                        ]
+                    ),
+                    channel_masses,
+                )
+                pops = value * mass / total_counts
+                if self.lattice.num_dims == 1:
                     count_history[gp][0] += pops
                     count_history[gp][1] += pops
+                else:
+                    count_history[self.lattice.gridpoint_index_flat(gp)] += pops
+
         self.save_timestep_array(
             np.transpose(count_history),
             timestep,

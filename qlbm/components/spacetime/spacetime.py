@@ -1,8 +1,5 @@
 """The end-to-end algorithm of the Space-Time Quantum Lattice Boltzmann Algorithm described in :cite:`spacetime`."""
 
-from logging import Logger, getLogger
-
-from qiskit import QuantumCircuit
 from typing_extensions import override
 
 from qlbm.components.base import LBMAlgorithm
@@ -30,7 +27,6 @@ class SpaceTimeQLBM(LBMAlgorithm):
     Attribute                  Summary
     ========================= ======================================================================
     :attr:`lattice`           The :class:`.SpaceTimeLattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
     ========================= ======================================================================
 
     Example usage:
@@ -51,60 +47,36 @@ class SpaceTimeQLBM(LBMAlgorithm):
         )
 
         # Draw the end-to-end algorithm for 1 time step
-        SpaceTimeQLBM(lattice=lattice).draw("mpl")
+        SpaceTimeQLBM(lattice=lattice).plot()
     """
 
     lattice: SpaceTimeLattice
 
     def __init__(
-        self,
-        lattice: SpaceTimeLattice,
-        filter_inside_blocks: bool = True,
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(lattice, logger)
-
-        self.lattice = lattice
+        self, lattice: SpaceTimeLattice, filter_inside_blocks: bool = True
+    ) -> None:
         self.filter_inside_blocks = filter_inside_blocks
-        self.circuit = self.create_circuit()
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = self.lattice.circuit.copy()
-
-        for timestep in range(self.lattice.num_timesteps, 0, -1):
-            # Warn the user if there are any shapes that are NOT bounceback boundary conditions.
-            if self.lattice.shapes["specular"]:
-                raise LatticeException(
-                    "Currently, the Space-Time QLBM algorithm only supports bounceback boundary conditions."
-                )
-
-            circuit.compose(
-                SpaceTimeStreamingOperator(self.lattice, timestep, self.logger).circuit,
-                inplace=True,
+    def build_vanilla(self) -> None:
+        if self.lattice.shapes["specular"]:
+            raise LatticeException(
+                "Currently, the Space-Time QLBM algorithm only supports bounceback boundary conditions."
             )
-
-            circuit.compose(
+        for timestep in range(self.lattice.num_timesteps, 0, -1):
+            self.place(SpaceTimeStreamingOperator(self.lattice, timestep))
+            self.place(
                 PointWiseSpaceTimeReflectionOperator(
                     self.lattice,
                     timestep,
                     self.lattice.shapes["bounceback"],
                     self.filter_inside_blocks,
-                    self.logger,
-                ).circuit,
-                inplace=True,
+                )
             )
-
             # There is no collision in 1D
             if self.lattice.num_dims > 1:
-                circuit.compose(
-                    SpaceTimeD2Q4CollisionOperator(
-                        self.lattice, timestep, logger=self.logger
-                    ).circuit,
-                    inplace=True,
-                )
-
-        return circuit
+                self.place(SpaceTimeD2Q4CollisionOperator(self.lattice, timestep))
 
     @override
     def __str__(self) -> str:

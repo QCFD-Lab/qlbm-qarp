@@ -1,19 +1,16 @@
 """Prepares the initial state for the :class:`.SpaceTimeQLBM` one gridpoint at a time."""
 
-from logging import Logger, getLogger
 from typing import List, Tuple
 
-from qiskit import QuantumCircuit
-from qiskit.circuit.library import MCXGate
 from typing_extensions import override
 
-from qlbm.components.base import LBMPrimitive
+from qlbm.components.base import LatticePrimitive
 from qlbm.lattice.lattices.spacetime_lattice import SpaceTimeLattice
 from qlbm.lattice.spacetime.properties_base import VonNeumannNeighbor
 from qlbm.tools.utils import bit_value, flatten
 
 
-class PointWiseSpaceTimeInitialConditions(LBMPrimitive):
+class PointWiseSpaceTimeInitialConditions(LatticePrimitive):
     r"""Prepares the initial state for the :class:`.SpaceTimeQLBM`.
 
     Initial conditions are supplied in a ``List[Tuple[Tuple[int, int], Tuple[bool, bool, bool, bool]]]``
@@ -40,7 +37,6 @@ class PointWiseSpaceTimeInitialConditions(LBMPrimitive):
     ========================= ======================================================================
     :attr:`grid_data`         The information encoding the particle probability distribution, formatted as (position, velocity) tuples.
     :attr:`lattice`           The :class:`.SpaceTimeLattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
     ========================= ======================================================================
 
     Example usage:
@@ -61,8 +57,10 @@ class PointWiseSpaceTimeInitialConditions(LBMPrimitive):
         )
 
         # Draw the initial conditions for two particles at (3, 7), traveling in the +y and -y directions
-        PointWiseSpaceTimeInitialConditions(lattice=lattice, grid_data=[((3, 7), (False, True, False, True))]).draw("mpl")
+        PointWiseSpaceTimeInitialConditions(lattice=lattice, grid_data=[((3, 7), (False, True, False, True))]).plot()
     """
+
+    lattice: SpaceTimeLattice
 
     def __init__(
         self,
@@ -72,51 +70,28 @@ class PointWiseSpaceTimeInitialConditions(LBMPrimitive):
             ((3, 4), (False, True, False, True)),
         ],
         filter_inside_blocks: bool = True,
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(logger)
-
-        self.lattice = lattice
+    ) -> None:
         self.grid_data = grid_data
         self.filter_inside_blocks = filter_inside_blocks
-
-        self.circuit = self.create_circuit()
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = self.lattice.circuit.copy()
-        circuit.h(self.lattice.grid_index())
+    def build_vanilla(self) -> None:
+        self.h(self.lattice.grid_index())
 
-        # Set the state for the origin
-        for grid_point_data in self.grid_data:
-            if self.filter_inside_blocks:
-                if self.lattice.is_inside_an_obstacle(grid_point_data[0]):
-                    continue
-            circuit.compose(self.set_grid_value(grid_point_data[0]), inplace=True)
-            for target_qubit in flatten(
-                [
-                    self.lattice.velocity_index(0, c)
-                    for c, is_velocity_enabled in enumerate(grid_point_data[1])
-                    if is_velocity_enabled
-                ]
+        for point_coordinates, velocity_values in self.grid_data:
+            if self.filter_inside_blocks and self.lattice.is_inside_an_obstacle(
+                point_coordinates
             ):
-                circuit.compose(
-                    MCXGate(
-                        num_ctrl_qubits=self.lattice.properties.get_num_grid_qubits(),
-                    ),
-                    qubits=list(self.lattice.grid_index() + [target_qubit]),
-                    inplace=True,
-                )
-            circuit.compose(self.set_grid_value(grid_point_data[0]), inplace=True)
+                continue
+            # Set the velocity state for the origin
+            self.set_point_velocity(point_coordinates, velocity_values, 0)
 
             # Set the velocity state for neighbors in increasing velocity
             for manhattan_distance in range(1, self.lattice.num_timesteps + 1):
                 for neighbor in self.lattice.extreme_point_indices[manhattan_distance]:
-                    circuit.compose(
-                        self.set_neighbor_velocity(
-                            grid_point_data[0], grid_point_data[1], neighbor
-                        ),
-                        inplace=True,
+                    self.set_neighbor_velocity(
+                        point_coordinates, velocity_values, neighbor
                     )
 
                 # No intermediate points at Manhattan distance 1
@@ -131,91 +106,85 @@ class PointWiseSpaceTimeInitialConditions(LBMPrimitive):
                         ].values()
                     )
                 ):
-                    circuit.compose(
-                        self.set_neighbor_velocity(
-                            grid_point_data[0], grid_point_data[1], neighbor
-                        ),
-                        inplace=True,
+                    self.set_neighbor_velocity(
+                        point_coordinates, velocity_values, neighbor
                     )
 
-        return circuit
-
-    def set_grid_value(self, point_coordinates: Tuple[int, ...]) -> QuantumCircuit:
-        r"""Applies :math:`X` gates to that convert the coordinates of a given gridpoint to :math:`\ket{1}^{\otimes n}`.
+    def set_grid_value(self, point_coordinates: Tuple[int, ...]) -> None:
+        r"""
+        Emit the :math:`X` gates that map the grid state ``point_coordinates`` onto :math:`\ket{1\ldots1}`.
 
         Parameters
         ----------
         point_coordinates : Tuple[int, ...]
-            The tuple encoding the gridpoint to convert to `\ket{1}^{\otimes n}`
-
-        Returns
-        -------
-        QuantumCircuit
-            The circuit that sets the gridpoint to the desired state.
+            The gridpoint to select.
         """
-        # ! TODO: rename, refactor into primitive
-        circuit = self.lattice.circuit.copy()
+        qubits_to_invert = [
+            self.lattice.grid_index(dim)[0] + qubit_index
+            for dim, num_gp in enumerate(self.lattice.num_gridpoints)
+            for qubit_index in range(num_gp.bit_length())
+            if not bit_value(point_coordinates[dim], qubit_index)
+        ]
+        if qubits_to_invert:
+            self.x(qubits_to_invert)
 
-        for dim, num_gp in enumerate(self.lattice.num_gridpoints):
-            for qubit_index in range(num_gp.bit_length()):
-                if not bit_value(point_coordinates[dim], qubit_index):
-                    circuit.x(self.lattice.grid_index(dim)[0] + qubit_index)
+    def set_point_velocity(
+        self,
+        point_coordinates: Tuple[int, ...],
+        velocity_values: Tuple[bool, ...],
+        neighbor_index: int,
+    ) -> None:
+        """
+        Emit the gates that enable ``velocity_values`` in the velocity register ``neighbor_index`` of gridpoint ``point_coordinates``.
 
-        return circuit
+        Parameters
+        ----------
+        point_coordinates : Tuple[int, ...]
+            The gridpoint whose grid state controls the operation.
+        velocity_values : Tuple[bool, ...]
+            Which velocities to enable.
+        neighbor_index : int
+            The velocity register (stencil position) to set.
+        """
+        self.set_grid_value(point_coordinates)
+        for target_qubit in flatten(
+            [
+                self.lattice.velocity_index(neighbor_index, c)
+                for c, is_velocity_enabled in enumerate(velocity_values)
+                if is_velocity_enabled
+            ]
+        ):
+            self.mcx(*self.lattice.grid_index(), target_qubit)
+        self.set_grid_value(point_coordinates)
 
     def set_neighbor_velocity(
         self,
         point_coordinates: Tuple[int, ...],
         velocity_values: Tuple[bool, ...],
         neighbor: VonNeumannNeighbor,
-    ) -> QuantumCircuit:
+    ) -> None:
         """
-        Sets the velocity state of the neighbor of a particular grid location to a given state.
+        Emit the gates that set the velocities of ``neighbor`` relative to ``point_coordinates``.
 
         Parameters
         ----------
         point_coordinates : Tuple[int, ...]
-            THe coordinates of the origin.
+            The origin gridpoint.
         velocity_values : Tuple[bool, ...]
-            The velocity values to set, encoded as whether the velocity is enabled.
+            Which velocities to enable.
         neighbor : VonNeumannNeighbor
-            The neighbor relative to the origin for which to set the velocity value.
-
-        Returns
-        -------
-        QuantumCircuit
-            The circuit that sets the velocity state.
+            The stencil neighbor whose register is set.
         """
-        # ! TODO: rename, refactor into primitive
-        circuit = self.lattice.circuit.copy()
         absolute_neighbor_coordinates = neighbor.get_absolute_values(
             point_coordinates, relative=False
         )
-        if self.filter_inside_blocks:
-            if self.lattice.is_inside_an_obstacle(absolute_neighbor_coordinates):
-                return self.lattice.circuit.copy()
-        circuit.compose(
-            self.set_grid_value(absolute_neighbor_coordinates), inplace=True
-        )
-        for target_qubit in flatten(
-            [
-                self.lattice.velocity_index(neighbor.neighbor_index, c)
-                for c, is_velocity_enabled in enumerate(velocity_values)
-                if is_velocity_enabled
-            ]
+        if self.filter_inside_blocks and self.lattice.is_inside_an_obstacle(
+            absolute_neighbor_coordinates
         ):
-            circuit.compose(
-                MCXGate(
-                    num_ctrl_qubits=self.lattice.properties.get_num_grid_qubits(),
-                ),
-                qubits=list(self.lattice.grid_index() + [target_qubit]),
-                inplace=True,
-            )
-        circuit.compose(
-            self.set_grid_value(absolute_neighbor_coordinates), inplace=True
+            return
+        self.set_point_velocity(
+            absolute_neighbor_coordinates, velocity_values, neighbor.neighbor_index
         )
-
-        return circuit
 
     @override
     def __str__(self) -> str:

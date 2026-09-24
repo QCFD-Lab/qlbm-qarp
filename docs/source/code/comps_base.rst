@@ -31,15 +31,29 @@ Lattice Base
 Components Base
 ----------------------------------
 
-.. autoclass:: qlbm.components.base.QuantumComponent
-    :members:
+Every component is a qarp block: leaves extend :class:`qarp.blocks.SimpleBlock`
+and trees extend :class:`qarp.blocks.CompositeBlockBase`, so components compose
+with ``ControlledBlock``, ``~``, ``**`` and the qarp engines directly.
 
 .. autoclass:: qlbm.components.base.LBMPrimitive
+    :members:
+
+.. autoclass:: qlbm.components.base.LatticePrimitive
+
+.. autoclass:: qlbm.components.base.LBMComposite
+    :members:
+
+.. autoclass:: qlbm.components.base.ControllableComponent
+    :members:
 
 .. autoclass:: qlbm.components.base.LBMOperator
 
-.. autoclass:: qlbm.components.base.MSOperator
-
-.. autoclass:: qlbm.components.base.SpaceTimeOperator
-
 .. autoclass:: qlbm.components.base.LBMAlgorithm
+
+.. autofunction:: qlbm.components.base.on
+
+.. autofunction:: qlbm.components.base.x_layer
+
+.. autofunction:: qlbm.components.base.controlled
+
+.. autofunction:: qlbm.components.base.flip_if

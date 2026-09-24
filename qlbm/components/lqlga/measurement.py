@@ -1,15 +1,12 @@
 """Measurement operator for the :class:`.SpaceTimeQLBM` algorithm :cite:`spacetime`."""
 
-from logging import Logger, getLogger
-
-from qiskit import ClassicalRegister
 from typing_extensions import override
 
-from qlbm.components.base import LQLGAOperator
+from qlbm.components.base import LatticePrimitive
 from qlbm.lattice.lattices.lqlga_lattice import LQLGALattice
 
 
-class LQLGAGridVelocityMeasurement(LQLGAOperator):
+class LQLGAGridVelocityMeasurement(LatticePrimitive):
     # TODO: Improve documentation
     """
     Measurement operator for the :class:`.LQLGA` algorithm.
@@ -34,32 +31,17 @@ class LQLGAGridVelocityMeasurement(LQLGAOperator):
             },
         )
 
-        LQLGAGridVelocityMeasurement(lattice=lattice).draw("mpl")
+        LQLGAGridVelocityMeasurement(lattice=lattice).plot()
     """
 
-    def __init__(
-        self,
-        lattice: LQLGALattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(lattice, logger)
-        self.lattice = lattice
+    lattice: LQLGALattice
 
-        self.circuit = self.create_circuit()
+    def __init__(self, lattice: LQLGALattice) -> None:
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self):
-        circuit = self.lattice.circuit.copy()
-
-        qubits_to_measure = list(range(self.lattice.num_base_qubits))
-        circuit.add_register(ClassicalRegister(self.lattice.num_base_qubits))
-
-        circuit.measure(
-            qubits_to_measure,
-            list(range(len(qubits_to_measure))),
-        )
-
-        return circuit
+    def build_vanilla(self) -> None:
+        self.measure([(qubit, qubit) for qubit in range(self.lattice.num_base_qubits)])
 
     @override
     def __str__(self) -> str:

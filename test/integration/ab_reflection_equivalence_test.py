@@ -16,31 +16,26 @@ positions, since non-entering velocities at obstacle boundaries represent
 physically unrealizable states.
 """
 
+import numpy as np
 import pytest
-from qiskit import QuantumCircuit, transpile
-from qiskit.quantum_info import Statevector
-from qiskit_aer import AerSimulator
+import qarpx as qx
 
 from qlbm.components.ab.reflection.agnosotic_reflection import (
     ABZoneAgnosticReflectionOperator,
 )
 from qlbm.components.ab.reflection.standard_reflection import ABReflectionOperator
 from qlbm.lattice import ABLattice
-
-_SIMULATOR = AerSimulator(method="statevector")
+from test.builders import CircuitBuilder
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _simulate_statevector(circuit: QuantumCircuit) -> Statevector:
-    """Run *circuit* on AerSimulator and return the final statevector."""
-    qc = circuit.copy()
-    qc.save_statevector()
-    tqc = transpile(qc, _SIMULATOR, optimization_level=0)
-    result = _SIMULATOR.run(tqc).result()
-    return result.data(0)["statevector"]
+def _simulate_statevector(builder) -> np.ndarray:
+    """Final statevector of a circuit builder, LSB-indexed."""
+    block = builder.build()
+    return np.asarray(qx.QarpSimulator().statevector(block.flatten(), block.n_qubits))
 
 
 def _make_lattice(boundary: str) -> ABLattice:
@@ -60,11 +55,9 @@ def _make_lattice(boundary: str) -> ABLattice:
     )
 
 
-def _encode_basis_state(
-    lattice: ABLattice, x: int, y: int, v: int
-) -> QuantumCircuit:
+def _encode_basis_state(lattice: ABLattice, x: int, y: int, v: int):
     """Encode the computational basis state ``|x>|y>|v>|0_ancillae>``."""
-    circuit = lattice.circuit.copy()
+    circuit = CircuitBuilder(lattice.n_qubits)
     for i, q in enumerate(lattice.grid_index(0)):
         if (x >> i) & 1:
             circuit.x(q)
@@ -77,7 +70,7 @@ def _encode_basis_state(
     return circuit
 
 
-def _extract_physical_state(lattice: ABLattice, sv: Statevector):
+def _extract_physical_state(lattice: ABLattice, sv: np.ndarray):
     """Extract ``(x, y, v) -> amplitude`` and ancilla status.
 
     Returns
@@ -101,7 +94,7 @@ def _extract_physical_state(lattice: ABLattice, sv: Statevector):
     ancilla_dirty = False
     dirty_ancilla_set: set = set()
 
-    for idx, amp in enumerate(sv.data):
+    for idx, amp in enumerate(sv):
         if abs(amp) < 1e-10:
             continue
 
@@ -122,9 +115,13 @@ def _extract_physical_state(lattice: ABLattice, sv: Statevector):
 
 def _run_both(lattice, std_circuit, za_circuit, x, y, v):
     """Run both operators on the same input and return extracted states."""
-    prep = _encode_basis_state(lattice, x, y, v)
-    std_sv = _simulate_statevector(prep.compose(std_circuit))
-    za_sv = _simulate_statevector(prep.compose(za_circuit))
+    # A CircuitBuilder composes in place; each run needs its own preparation.
+    std_prep = _encode_basis_state(lattice, x, y, v)
+    std_prep.compose(std_circuit)
+    std_sv = _simulate_statevector(std_prep)
+    za_prep = _encode_basis_state(lattice, x, y, v)
+    za_prep.compose(za_circuit)
+    za_sv = _simulate_statevector(za_prep)
     return (
         _extract_physical_state(lattice, std_sv),
         _extract_physical_state(lattice, za_sv),
@@ -133,8 +130,8 @@ def _run_both(lattice, std_circuit, za_circuit, x, y, v):
 
 def _assert_equivalence(
     lattice: ABLattice,
-    std_circuit: QuantumCircuit,
-    za_circuit: QuantumCircuit,
+    std_circuit,
+    za_circuit,
     x: int,
     y: int,
     v: int,
@@ -285,13 +282,13 @@ def bb_lattice():
 @pytest.fixture(scope="module")
 def bb_std_circuit(bb_lattice):
     """Standard (segment-wise) bounceback reflection circuit."""
-    return ABReflectionOperator(bb_lattice).circuit
+    return ABReflectionOperator(bb_lattice)
 
 
 @pytest.fixture(scope="module")
 def bb_za_circuit(bb_lattice):
     """Zone-agnostic bounceback reflection circuit."""
-    return ABZoneAgnosticReflectionOperator(bb_lattice).circuit
+    return ABZoneAgnosticReflectionOperator(bb_lattice)
 
 
 @pytest.fixture(scope="module")
@@ -303,13 +300,13 @@ def sr_lattice():
 @pytest.fixture(scope="module")
 def sr_std_circuit(sr_lattice):
     """Standard (segment-wise) specular reflection circuit."""
-    return ABReflectionOperator(sr_lattice).circuit
+    return ABReflectionOperator(sr_lattice)
 
 
 @pytest.fixture(scope="module")
 def sr_za_circuit(sr_lattice):
     """Zone-agnostic specular reflection circuit."""
-    return ABZoneAgnosticReflectionOperator(sr_lattice).circuit
+    return ABZoneAgnosticReflectionOperator(sr_lattice)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

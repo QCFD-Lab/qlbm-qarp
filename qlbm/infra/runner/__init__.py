@@ -1,13 +1,11 @@
-"""Runners integrating qlbm circuits with Qiskit, Qulacs, and MPIQulacs runners."""
+"""Runners executing qlbm circuits on the qarp simulator."""
 
 from .base import CircuitRunner
-from .qiskit_runner import QiskitRunner
-from .qulacs_runner import QulacsRunner
+from .qarp_runner import QarpRunner
 from .simulation_config import SimulationConfig
 
 __all__ = [
-    "CircuitRunner",  # "MPIQulacsRunner",
-    "QiskitRunner",
-    "QulacsRunner",
+    "CircuitRunner",
+    "QarpRunner",
     "SimulationConfig",
 ]

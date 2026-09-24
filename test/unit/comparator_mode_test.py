@@ -1,7 +1,7 @@
 import pytest
 
-from qlbm.tools.utils import ComparatorMode
 from qlbm.tools.exceptions import LatticeException
+from qlbm.tools.utils import ComparatorMode
 
 
 def test_comparator_mode_from_string():

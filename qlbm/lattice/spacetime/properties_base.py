@@ -11,8 +11,8 @@ from logging import Logger, getLogger
 from typing import Dict, List, Tuple, cast
 
 import numpy as np
-from qiskit import QuantumRegister
 
+from qlbm.lattice.registers import Register
 from qlbm.tools.exceptions import LatticeException
 
 
@@ -438,14 +438,14 @@ class SpaceTimeLatticeBuilder(ABC):
         )
 
     @abstractmethod
-    def get_registers(self) -> Tuple[List[QuantumRegister], ...]:
+    def get_registers(self) -> Tuple[List[Register], ...]:
         """Returns a tuple of lists of quantum registers this lattice configuration requires.
 
         ach list in the tuple represents a specific type or group of quantum registers: grid, velocity, and ancilla.
 
         Returns
         -------
-        Tuple[List[QuantumRegister], ...]
+        Tuple[List[Register], ...]
             A tuple containing lists of quantum registers.
         """
         pass

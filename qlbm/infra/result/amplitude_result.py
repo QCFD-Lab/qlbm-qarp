@@ -52,52 +52,54 @@ class AmplitudeResult(QBMResult):
     @override
     def save_timestep_counts(
         self,
-        counts: Dict[str, float],
+        counts: Dict[int, float],
         timestep: int,
         create_vis: bool = True,
         save_array: bool = False,
+        n_cbits: int | None = None,
     ):
-        dimension_bit_counts = (
-            self.lattice.num_gridpoints[0].bit_length(),
-            self.lattice.num_gridpoints[0].bit_length()
-            + self.lattice.num_gridpoints[1].bit_length()
-            if self.lattice.num_dims > 1
-            else 0,
-            self.lattice.num_gridpoints[0].bit_length()
-            + self.lattice.num_gridpoints[1].bit_length()
-            + self.lattice.num_gridpoints[2].bit_length()
-            if self.lattice.num_dims > 2
-            else 0,
-        )
+        num_grid_bits = self.lattice.num_grid_qubits
+        if n_cbits is None:
+            n_cbits = num_grid_bits
+
+        # Grid measurements write dimension d into the cbits directly above
+        # dimension d-1, so every coordinate is a shift plus a mask.
+        dimension_bit_counts = [
+            self.lattice.num_gridpoints[dim].bit_length()
+            for dim in range(self.lattice.num_dims)
+        ]
+        dimension_offsets = [
+            sum(dimension_bit_counts[:dim]) for dim in range(self.lattice.num_dims)
+        ]
+
+        def coordinate(key: int, dim: int) -> int:
+            return (key >> dimension_offsets[dim]) & (
+                (1 << dimension_bit_counts[dim]) - 1
+            )
 
         if self.lattice.num_dims == 1:
             # The second dimension is a dirty rendering trick for VTK and ParaView
             count_history = np.zeros((self.lattice.num_gridpoints[0] + 1, 2))
-            num_grid_bits = self.lattice.num_grid_qubits
-            for count in counts:
-                x = int(count[-num_grid_bits:], 2)
-                velocity_bits = count[:-num_grid_bits]
-                rest_bonus = (
-                    int(velocity_bits == "0" * self.lattice.num_velocity_qubits)
-                    if velocity_bits
-                    else 0
-                )
+            # The rest bonus only applies when the velocity register was
+            # measured in full alongside the grid register.
+            has_velocity_bits = (
+                n_cbits - num_grid_bits == self.lattice.num_velocity_qubits
+                and self.lattice.num_velocity_qubits > 0
+            )
+            for key, value in counts.items():
+                x = key & ((1 << num_grid_bits) - 1)
+                rest_bonus = int(has_velocity_bits and (key >> num_grid_bits) == 0)
                 # Another dirty rendering trick for VTK and ParaView
-                count_history[x][0] += counts[count] * (1 + rest_bonus)
-                count_history[x][1] += counts[count] * (1 + rest_bonus)
+                count_history[x][0] += value * (1 + rest_bonus)
+                count_history[x][1] += value * (1 + rest_bonus)
 
         elif self.lattice.num_dims == 2:
             count_history = np.zeros(
                 (self.lattice.num_gridpoints[0] + 1, self.lattice.num_gridpoints[1] + 1)
             )
 
-            for count in counts:
-                x = int(count[: dimension_bit_counts[0]], 2)
-                y = int(
-                    count[dimension_bit_counts[0] : dimension_bit_counts[1]],
-                    2,
-                )
-                count_history[x][y] = counts[count]
+            for key, value in counts.items():
+                count_history[coordinate(key, 0)][coordinate(key, 1)] += value
 
         elif self.lattice.num_dims == 3:
             count_history = np.zeros(  # type: ignore
@@ -108,20 +110,14 @@ class AmplitudeResult(QBMResult):
                 )
             )
 
-            for count in counts:
-                x = int(count[: dimension_bit_counts[0]], 2)
-                y = int(
-                    count[dimension_bit_counts[0] : dimension_bit_counts[1]],
-                    2,
-                )
-                z = int(
-                    count[dimension_bit_counts[1] : dimension_bit_counts[2]],
-                    2,
-                )
-                count_history[x][y][z] = counts[count]
+            for key, value in counts.items():
+                count_history[coordinate(key, 0)][coordinate(key, 1)][
+                    coordinate(key, 2)
+                ] += value
 
+        # Transposing puts the x-axis last, which is the order VTK flattens in.
         self.save_timestep_array(
-            count_history if self.lattice.num_dims > 1 else np.transpose(count_history),
+            np.transpose(count_history),
             timestep,
             create_vis=create_vis,
             save_counts_array=save_array,

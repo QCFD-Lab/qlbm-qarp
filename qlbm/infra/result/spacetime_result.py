@@ -10,6 +10,7 @@ from typing_extensions import override
 from vtkmodules.util import numpy_support
 
 from qlbm.lattice.lattices.spacetime_lattice import SpaceTimeLattice
+from qlbm.tools.exceptions import ResultsException
 
 from .base import QBMResult
 
@@ -52,10 +53,11 @@ class SpaceTimeResult(QBMResult):
     @override
     def save_timestep_counts(
         self,
-        counts: Dict[str, float],
+        counts: Dict[int, float],
         timestep: int,
         create_vis: bool = True,
         save_array: bool = False,
+        n_cbits: int | None = None,
     ):
         dimension_bit_counts = (
             self.lattice.num_gridpoints[0].bit_length(),
@@ -70,44 +72,29 @@ class SpaceTimeResult(QBMResult):
         if self.lattice.num_dims == 1:
             # The second dimension is a dirty rendering trick for VTK and ParaView
             count_history = np.zeros((self.lattice.num_gridpoints[0] + 1, 2))
-            for count in counts:
-                count_inverse = count[::-1]
-                x = int(
-                    count_inverse[: dimension_bit_counts[0]][::-1],
-                    2,
-                )
-                num_populations = int(
-                    count_inverse[dimension_bit_counts[0] :].count(
-                        "1"
-                    )  # The number of 1s is the number of populations
-                )
+            num_grid_bits = dimension_bit_counts[0]
+            for key, value in counts.items():
+                x = key & ((1 << num_grid_bits) - 1)
+                # The number of 1s above the grid register is the number of populations
+                num_populations = (key >> num_grid_bits).bit_count()
                 # Another dirty rendering trick for VTK and ParaView
-                count_history[x][0] = count_history[x][1] = (
-                    counts[count] * num_populations
-                )
+                count_history[x][0] = count_history[x][1] = value * num_populations
         elif self.lattice.num_dims == 2:
             count_history = np.zeros(
                 (self.lattice.num_gridpoints[0] + 1, self.lattice.num_gridpoints[1] + 1)
             )
-            for count in counts:
-                count_inverse = count[::-1]
-                x = int(
-                    count_inverse[: dimension_bit_counts[0]][::-1],
-                    2,
+            num_grid_bits = dimension_bit_counts[0] + dimension_bit_counts[1]
+            for key, value in counts.items():
+                x = key & ((1 << dimension_bit_counts[0]) - 1)
+                y = (key >> dimension_bit_counts[0]) & (
+                    (1 << dimension_bit_counts[1]) - 1
                 )
-                y = int(
-                    count_inverse[
-                        dimension_bit_counts[0] : dimension_bit_counts[0]
-                        + dimension_bit_counts[1]
-                    ][::-1],
-                    2,
-                )
-                num_populations = int(
-                    count_inverse[
-                        dimension_bit_counts[0] + dimension_bit_counts[1] :
-                    ].count("1")  # The number of 1s is the number of populations
-                )
-                count_history[x][y] = counts[count] * num_populations
+                num_populations = (key >> num_grid_bits).bit_count()
+                count_history[x][y] = value * num_populations
+        else:
+            raise ResultsException(
+                f"Space-Time results are not supported for lattices with {self.lattice.num_dims} dimensions."
+            )
         self.save_timestep_array(
             np.transpose(count_history),
             timestep,

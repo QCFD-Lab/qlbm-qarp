@@ -1,13 +1,8 @@
 """Primitives for the implementation of the Collisionless Quantum Lattice Boltzmann Method introduced in :cite:t:`collisionless`."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
-from typing import List
-
-from qiskit import ClassicalRegister, QuantumCircuit
 from typing_extensions import override
 
-from qlbm.components.base import LBMPrimitive
+from qlbm.components.base import LatticePrimitive, LBMOperator
 from qlbm.components.common.comparators import SingleRegisterComparator
 from qlbm.lattice import MSLattice
 from qlbm.lattice.geometry.encodings.ms import ReflectionResetEdge
@@ -15,7 +10,7 @@ from qlbm.tools import flatten
 from qlbm.tools.utils import ComparatorMode
 
 
-class GridMeasurement(LBMPrimitive):
+class GridMeasurement(LatticePrimitive):
     """A primitive that implements a measurement operation on the grid qubits.
 
     Used at the end of the time step circuit to extract information from the quantum state.
@@ -24,7 +19,6 @@ class GridMeasurement(LBMPrimitive):
     Attribute                  Summary
     ========================= ======================================================================
     :attr:`lattice`           The :class:`.MSLattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
     ========================= ======================================================================
 
     Example usage:
@@ -58,45 +52,28 @@ class GridMeasurement(LBMPrimitive):
         })
 
         # Draw the measurement circuit
-        GridMeasurement(lattice).draw("mpl")
+        GridMeasurement(lattice).plot()
     """
 
-    def __init__(
-        self,
-        lattice: MSLattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(logger)
-        self.lattice = lattice
+    lattice: MSLattice
 
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+    def __init__(self, lattice: MSLattice) -> None:
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = QuantumCircuit(*self.lattice.registers)
-        all_grid_qubits: List[int] = flatten(
+    def build_vanilla(self) -> None:
+        all_grid_qubits = flatten(
             [self.lattice.grid_index(dim) for dim in range(self.lattice.num_dims)]
         )
-        circuit.add_register(ClassicalRegister(self.lattice.num_grid_qubits))
-
-        circuit.measure(
-            all_grid_qubits,
-            list(range(self.lattice.num_grid_qubits)),
-        )
-
-        return circuit
+        # Classical bits are flat indices in qarp; one bit per grid qubit.
+        self.measure([(qubit, cbit) for cbit, qubit in enumerate(all_grid_qubits)])
 
     @override
     def __str__(self) -> str:
         return f"[Primitive DVGridMeasurement with lattice {self.lattice}]"
 
 
-class MSInitialConditions(LBMPrimitive):
+class MSInitialConditions(LatticePrimitive):
     """A primitive that creates the quantum circuit to prepare the flow field in its initial conditions for the :class:`.MSLattice`.
 
     The initial conditions create a quantum state spanning half the grid
@@ -107,7 +84,6 @@ class MSInitialConditions(LBMPrimitive):
     Attribute                  Summary
     ========================= ======================================================================
     :attr:`lattice`           The :class:`.MSLattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
     ========================= ======================================================================
 
     Example usage:
@@ -141,48 +117,34 @@ class MSInitialConditions(LBMPrimitive):
         })
 
         # Draw the initial conditions circuit
-        MSInitialConditions(lattice).draw("mpl")
+        MSInitialConditions(lattice).plot()
     """
 
-    def __init__(
-        self,
-        lattice: MSLattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(logger)
-        self.lattice = lattice
+    lattice: MSLattice
 
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+    def __init__(self, lattice: MSLattice) -> None:
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = QuantumCircuit(*self.lattice.registers)
-
-        for dim in range(self.lattice.num_dims):
-            circuit.x(self.lattice.velocity_dir_index(dim)[0])
-
-        for x in self.lattice.grid_index(0)[:-1]:
-            circuit.h(x)
-
-        if self.lattice.num_dims > 1:
-            circuit.h(self.lattice.grid_index(1))
-
-        if self.lattice.num_dims > 2:
-            circuit.h(self.lattice.grid_index(2))
-
-        return circuit
+    def build_vanilla(self) -> None:
+        self.x(
+            [
+                self.lattice.velocity_dir_index(dim)[0]
+                for dim in range(self.lattice.num_dims)
+            ]
+        )
+        superposed = self.lattice.grid_index(0)[:-1] + flatten(
+            [self.lattice.grid_index(dim) for dim in range(1, self.lattice.num_dims)]
+        )
+        if superposed:
+            self.h(superposed)
 
     @override
     def __str__(self) -> str:
         return f"[Primitive InitialConditions with lattice {self.lattice}]"
 
 
-class MSInitialConditions3DSlim(LBMPrimitive):
+class MSInitialConditions3DSlim(LatticePrimitive):
     r"""
     A primitive that creates the quantum circuit to prepare the flow field in its initial conditions for 3 dimensions.
 
@@ -196,7 +158,6 @@ class MSInitialConditions3DSlim(LBMPrimitive):
     Attribute                  Summary
     ========================= ======================================================================
     :attr:`lattice`           The :class:`.MSLattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
     ========================= ======================================================================
 
     Example usage:
@@ -225,49 +186,26 @@ class MSInitialConditions3DSlim(LBMPrimitive):
         })
 
         # Draw the initial conditions circuit
-        MSInitialConditions3DSlim(lattice).draw("mpl")
+        MSInitialConditions3DSlim(lattice).plot()
     """
 
-    def __init__(
-        self,
-        lattice: MSLattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(logger)
-        self.lattice = lattice
+    lattice: MSLattice
 
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+    def __init__(self, lattice: MSLattice) -> None:
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = QuantumCircuit(*self.lattice.registers)
-
-        # for dim in range(self.lattice.num_dimensions):
-
-        circuit.x(self.lattice.velocity_dir_index())
-
-        # for x in self.lattice.grid_index(0)[:-1]:
-        # circuit.h(self.lattice.grid_index(0)[0])
-
-        # if self.lattice.num_dimensions > 1:
-        #     circuit.h(self.lattice.grid_index(1))
-
+    def build_vanilla(self) -> None:
+        self.x(self.lattice.velocity_dir_index())
         if self.lattice.num_dims > 2:
-            circuit.h(self.lattice.grid_index(2))
-
-        return circuit
+            self.h(self.lattice.grid_index(2))
 
     @override
     def __str__(self) -> str:
         return f"[Primitive InitialConditions with lattice {self.lattice}]"
 
 
-class EdgeComparator(LBMPrimitive):
+class EdgeComparator(LBMOperator):
     """
     A primitive used in the 3D collisionless :class:`SpecularReflectionOperator` and :class:`BounceBackReflectionOperator` described in :cite:t:`collisionless`.
 
@@ -275,7 +213,6 @@ class EdgeComparator(LBMPrimitive):
     Attribute                  Summary
     ========================= ======================================================================
     :attr:`lattice`           The :class:`.MSLattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
     :attr:`edge`              The coordinates of the edge within the grid.
     ========================= ======================================================================
 
@@ -299,57 +236,35 @@ class EdgeComparator(LBMPrimitive):
         )
 
         # Draw the edge comparator circuit for one specific corner edge
-        EdgeComparator(lattice, lattice.shape_list[0].corner_edges_3d[0]).draw("mpl")
+        EdgeComparator(lattice, lattice.shape_list[0].corner_edges_3d[0]).plot()
     """
 
-    def __init__(
-        self,
-        lattice: MSLattice,
-        edge: ReflectionResetEdge,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(logger)
-        self.lattice = lattice
-        self.edge = edge
+    lattice: MSLattice
 
-        self.circuit = self.create_circuit()
+    def __init__(self, lattice: MSLattice, edge: ReflectionResetEdge) -> None:
+        self.edge = edge
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = self.lattice.circuit.copy()
-        lb_comparator = SingleRegisterComparator(
-            self.lattice.num_gridpoints[self.edge.dim_disconnected].bit_length() + 1,
-            self.edge.bounds_disconnected_dim[0],
-            ComparatorMode.GE,
-            logger=self.logger,
-        ).circuit
-        ub_comparator = SingleRegisterComparator(
-            self.lattice.num_gridpoints[self.edge.dim_disconnected].bit_length() + 1,
-            self.edge.bounds_disconnected_dim[1],
-            ComparatorMode.LE,
-            logger=self.logger,
-        ).circuit
+    def build_vanilla(self) -> None:
+        dim = self.edge.dim_disconnected
+        num_qubits = self.lattice.num_gridpoints[dim].bit_length() + 1
+        grid_index = self.lattice.grid_index(dim)
+        # Two comparator ancillae per relevant dimension: one for the lower bound, one for the upper.
+        ancillae = self.lattice.ancillae_comparator_index(0)
 
-        # for c, wall_alignment_dim in enumerate(self.wall.alignment_dims):
-        circuit.compose(
-            lb_comparator,
-            qubits=self.lattice.grid_index(self.edge.dim_disconnected)
-            + self.lattice.ancillae_comparator_index(0)[
-                :-1  # :-1 Effectively selects only the first (lb) qubit
-            ],  # There are two comparator ancillae, for each relevant dimension, one for l and one for u
-            inplace=True,
+        self.place(
+            SingleRegisterComparator(
+                num_qubits, self.edge.bounds_disconnected_dim[0], ComparatorMode.GE
+            ),
+            grid_index + ancillae[:-1],
         )
-
-        circuit.compose(
-            ub_comparator,
-            qubits=self.lattice.grid_index(self.edge.dim_disconnected)
-            + self.lattice.ancillae_comparator_index(0)[
-                1:  # 1: Effectively selects only the last (ub) qubit
-            ],  # There are two comparator ancillae, for each relevant dimension, one for l and one for u.
-            inplace=True,
+        self.place(
+            SingleRegisterComparator(
+                num_qubits, self.edge.bounds_disconnected_dim[1], ComparatorMode.LE
+            ),
+            grid_index + ancillae[1:],
         )
-
-        return circuit
 
     @override
     def __str__(self) -> str:

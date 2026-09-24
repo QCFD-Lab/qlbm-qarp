@@ -6,10 +6,10 @@ from math import prod
 from typing import Dict, List, Tuple, cast, override
 
 from numpy import ceil, log2
-from qiskit import QuantumCircuit, QuantumRegister
 
 from qlbm.lattice.geometry.shapes.base import Shape
 from qlbm.lattice.lattices.base import Lattice
+from qlbm.lattice.registers import Register, assign_offsets
 from qlbm.lattice.spacetime.properties_base import (
     LatticeDiscretization,
     LatticeDiscretizationProperties,
@@ -33,7 +33,7 @@ class LQLGALattice(Lattice):
     :attr:`num_base_qubits`              The number of qubits required to represent the lattice without velocities.
     :attr:`num_total_qubits`             The total number of qubits required to represent the lattice, including velocities.
     :attr:`registers`                    The list of quantum registers for the lattice, one for each gridpoint.
-    :attr:`circuit`                      The quantum circuit representing the lattice, initialized with the registers.
+    :attr:`n_qubits`                     The total number of qubits across all lattice registers.
     ==================================== ========================================================================================
 
     The registers encoded in the lattice and their accessors are given below.
@@ -73,8 +73,8 @@ class LQLGALattice(Lattice):
     num_marker_qubits: int
     """The number of qubits used to identify geometries, if parallel lattices are being simulated."""
 
-    velocity_register: QuantumRegister
-    """The quantum register representing the velocities of the lattice."""
+    velocity_register: List[Register]
+    """The quantum registers representing the velocities of the lattice."""
 
     def __init__(
         self,
@@ -115,14 +115,12 @@ class LQLGALattice(Lattice):
         self.velocity_register, self.marker_register, self.accumulation_register = (
             temp_registers
         )
-        self.registers = tuple(flatten(temp_registers))
-
-        self.circuit = QuantumCircuit(*self.registers)
+        self.registers = assign_offsets(flatten(temp_registers))
 
     @override
-    def get_registers(self) -> Tuple[List[QuantumRegister], ...]:
+    def get_registers(self) -> Tuple[List[Register], ...]:
         velocity_registers = [
-            QuantumRegister(
+            Register(
                 LatticeDiscretizationProperties.get_num_velocities(self.discretization),
                 name=rf"v^{{{gp_tuple}}}",
             )
@@ -133,7 +131,7 @@ class LQLGALattice(Lattice):
 
         marker_register = (
             [
-                QuantumRegister(
+                Register(
                     int(ceil(log2(len(self.geometries)))),
                     name="m",
                 )
@@ -143,7 +141,7 @@ class LQLGALattice(Lattice):
         )
 
         accumulation_register = (
-            [QuantumRegister(self.num_accumulation_qubits, name="acc")]
+            [Register(self.num_accumulation_qubits, name="acc")]
             if self.has_accumulation_register()
             else []
         )
@@ -365,8 +363,7 @@ class LQLGALattice(Lattice):
         For a given lattice (set number of gridpoints and velocity discretization),
         set multiple geometry configurations to simulate simultaneously.
 
-        .. plot::
-            :include-source:
+        .. code-block:: python
 
             from qlbm.lattice import LQLGALattice
 
@@ -387,7 +384,7 @@ class LQLGALattice(Lattice):
                 ]
             )
 
-            lattice.circuit.draw("mpl")
+            lattice.registers
 
         Parameters
         ----------

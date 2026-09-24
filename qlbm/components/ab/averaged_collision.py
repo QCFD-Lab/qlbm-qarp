@@ -1,9 +1,5 @@
 """WIP."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
-
-from qiskit import QuantumCircuit
 from typing_extensions import override
 
 from qlbm.components.base import LBMOperator
@@ -18,41 +14,19 @@ class ABEAveragedCollisionOperator(LBMOperator):
 
     lattice: ABLattice
 
-    def __init__(
-        self,
-        lattice: ABLattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(lattice, logger)
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+    def __init__(self, lattice: ABLattice) -> None:
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        if self.lattice.discretization == LatticeDiscretization.D1Q3:
-            return self.__create_circuit_d1q3()
-
-        raise LatticeException("ABE only currently supported in D1Q3")
-
-    def __create_circuit_d1q3(self):
-        circuit = self.lattice.circuit.copy()
-
-        circuit.compose(
+    def build_vanilla(self) -> None:
+        if self.lattice.discretization != LatticeDiscretization.D1Q3:
+            raise LatticeException("ABE only currently supported in D1Q3")
+        self.place(
             TruncatedQFT(
-                self.lattice.num_velocity_qubits,
-                self.lattice.num_velocities_per_point,
-                self.logger,
-            ).circuit,
-            qubits=self.lattice.velocity_index(),
-            inplace=True,
+                self.lattice.num_velocity_qubits, self.lattice.num_velocities_per_point
+            ),
+            self.lattice.velocity_index(),
         )
-
-        return circuit
 
     @override
     def __str__(self) -> str:
