@@ -156,7 +156,9 @@ CASES_DECODE: List[Dict[str, Any]] = [
         "lattice": _ST_2D_4X4,
         "num_timesteps": 1,
         "n_cbits": 8,
-        "counts": [[0, 10], [17, 20], [90, 30], [175, 40], [255, 50]],
+        # One populated outcome per gridpoint: the qiskit-based decoder keeps
+        # only the last outcome of a gridpoint instead of summing them.
+        "counts": [[0, 10], [17, 20], [90, 30], [175, 40], [252, 50]],
     },
     {
         "id": "infra_decode_lqlga_1d_q2",

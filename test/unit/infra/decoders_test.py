@@ -117,6 +117,47 @@ class TestLQLGAMultiDimensional:
         np.testing.assert_allclose(field, expected, atol=1e-12)
 
 
+class TestSpaceTimeAccumulation:
+    """Velocity profiles observed at one gridpoint add up to its density."""
+
+    def test_1d_profiles_sharing_a_gridpoint_accumulate(self, tmp_path):
+        """Two outcomes at one gridpoint contribute their populations together."""
+        lattice = SpaceTimeLattice(
+            1, {"lattice": {"dim": {"x": 8}, "velocities": "D1Q2"}, "geometry": []}
+        )
+        result = SpaceTimeResult(lattice, str(tmp_path))
+        # cbits 0..2 = x = 2; the profiles hold one and two populations.
+        counts = {2 | (0b01 << 3): 30.0, 2 | (0b11 << 3): 10.0}
+
+        field = decode_field(result, counts, 5)
+
+        assert field.shape == (2, 8)
+        assert field[0][2] == field[1][2] == 50.0
+        assert field.sum() == 100.0
+
+    def test_2d_profiles_sharing_a_gridpoint_accumulate(self, tmp_path):
+        """A collision superposition keeps the full mass of its gridpoint."""
+        lattice = SpaceTimeLattice(
+            1,
+            {
+                "lattice": {"dim": {"x": 4, "y": 4}, "velocities": "D2Q4"},
+                "geometry": [],
+            },
+        )
+        result = SpaceTimeResult(lattice, str(tmp_path))
+        # x = 1 (cbits 0..1), y = 2 (cbits 2..3). A head-on pair leaves the
+        # two-particle profiles 0101 and 1010 with probability 1/2 each.
+        grid_key = 0b1001
+        counts = {grid_key | (0b0101 << 4): 0.5, grid_key | (0b1010 << 4): 0.5}
+
+        field = decode_field(result, counts, 8)
+
+        # The field is transposed on the way out, so it indexes [y][x].
+        assert field.shape == (4, 4)
+        assert field[2][1] == pytest.approx(2.0)
+        assert field.sum() == pytest.approx(2.0)
+
+
 class TestSpaceTimeResultGuards:
     """Space-Time results are defined up to two dimensions."""
 

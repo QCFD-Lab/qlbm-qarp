@@ -1,14 +1,44 @@
 """A ``SimulationConfig`` ties together the four algorithmic circuits, the optimization level, and the shot budget."""
 
 from logging import Logger, getLogger
+from numbers import Integral
 from typing import Any, List
 
 import numpy as np
 import qarpx as qx
-from qarp import EXACT
+from qarp import EXACT, Shots
 
 from qlbm.infra.compiler import CircuitCompiler
 from qlbm.tools.exceptions import ExecutionException
+
+
+def resolve_shots(shots: Any) -> "int | Shots":
+    """
+    The shot budget as a built-in ``int``, or ``qarp.EXACT`` unchanged.
+
+    Parameters
+    ----------
+    shots : Any
+        The requested budget: a positive whole number of any integral type, or ``qarp.EXACT``.
+
+    Returns
+    -------
+    int | Shots
+        ``qarp.EXACT``, or the budget as a built-in ``int``.
+
+    Raises
+    ------
+    ExecutionException
+        If ``shots`` is neither ``qarp.EXACT`` nor a positive whole number.
+    """
+    if shots is EXACT:
+        return EXACT
+    # bool is an integral type, and True would sample a single shot.
+    if isinstance(shots, bool) or not isinstance(shots, Integral) or shots < 1:
+        raise ExecutionException(
+            f"Unsupported shot budget {shots}. Provide a positive integer or qarp.EXACT."
+        )
+    return int(shots)
 
 
 class SimulationConfig:
@@ -144,12 +174,7 @@ class SimulationConfig:
                 f"Unsupported optimization level {self.optimization_level}. Supported optimization levels are {CircuitCompiler.supported_optimization_levels}."
             )
 
-        if self.shots is not EXACT and (
-            not isinstance(self.shots, int) or self.shots < 1
-        ):
-            raise ExecutionException(
-                f"Unsupported shot budget {self.shots}. Provide a positive integer or qarp.EXACT."
-            )
+        resolve_shots(self.shots)
 
     def __is_compatible_type(
         self,

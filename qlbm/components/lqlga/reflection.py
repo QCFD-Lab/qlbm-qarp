@@ -14,6 +14,19 @@ from qlbm.tools.exceptions import CircuitException
 from qlbm.tools.utils import get_qubits_to_invert
 
 
+def _reject_unsupported(lattice: LQLGALattice) -> None:
+    """Raise unless reflection is implemented for the discretization of ``lattice``."""
+    # Checked even without shapes: LQLGA streaming only moves the first
+    # x-line, so this is what keeps a 2D or 3D time step from building.
+    if lattice.discretization not in (
+        LatticeDiscretization.D1Q2,
+        LatticeDiscretization.D1Q3,
+    ):
+        raise CircuitException(
+            f"Reflection Operator unsupported for {lattice.discretization}."
+        )
+
+
 def _swap_pairs(lattice: LQLGALattice, shape: LQLGAShape) -> List[Tuple[int, int]]:
     """The velocity-qubit pairs ``shape`` reflects on ``lattice``."""
     match lattice.discretization:
@@ -90,6 +103,7 @@ class LQLGAReflectionOperator(LatticePrimitive):
 
     @override
     def build_vanilla(self) -> None:
+        _reject_unsupported(self.lattice)
         for shape in self.shapes:
             pairs = _swap_pairs(self.lattice, shape)
             if pairs:
@@ -152,6 +166,7 @@ class LQLGAMGReflectionOperator(LBMOperator):
 
     @override
     def build_vanilla(self) -> None:
+        _reject_unsupported(self.lattice)
         marker = self.lattice.marker_index()
         for c, geometry in enumerate(self.shapes):
             # Prepare the |1> state in the marker register for geometry c

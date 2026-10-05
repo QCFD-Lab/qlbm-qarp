@@ -2,10 +2,10 @@
 
 from typing import List
 
-from qarp.blocks import QFTBlock
+from qarp.blocks import CompositeBlock, QFTBlock
 from typing_extensions import override
 
-from qlbm.components.base import LatticePrimitive, LBMOperator, controlled
+from qlbm.components.base import LatticePrimitive, LBMOperator, controlled, on
 from qlbm.components.common.adders import PhaseShift
 from qlbm.lattice import MSLattice
 from qlbm.tools import CircuitException, bit_value
@@ -149,24 +149,25 @@ class ControlledIncrementer(LBMOperator):
                     ancilla = self.lattice.ancillae_velocity_index(dim)
             control_qubits = ancilla + direction
 
-            self.place(QFTBlock(num_qubits_dim), grid_index)
+            # One block per dimension: QFT, phase shifts and inverse QFT are a
+            # basis-state permutation together, and none of them is on its own.
             # UP+ when the direction qubit is |1>, UP- when it is |0>
-            self.place(
+            shift = [
+                on(QFTBlock(num_qubits_dim), grid_index),
                 controlled(
                     PhaseShift(len(grid_index), positive=True),
                     control_qubits,
                     grid_index,
-                )
-            )
-            self.place(
+                ),
                 controlled(
                     PhaseShift(len(grid_index), positive=False),
                     control_qubits,
                     grid_index,
                     ctrl_state=[True] * len(ancilla) + [False] * len(direction),
-                )
-            )
-            self.place(~QFTBlock(num_qubits_dim), grid_index)
+                ),
+                on(~QFTBlock(num_qubits_dim), grid_index),
+            ]
+            self.place(CompositeBlock(shift, self.n_qubits))
 
     @override
     def __str__(self) -> str:

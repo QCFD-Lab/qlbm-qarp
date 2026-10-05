@@ -78,7 +78,8 @@ class SpaceTimeResult(QBMResult):
                 # The number of 1s above the grid register is the number of populations
                 num_populations = (key >> num_grid_bits).bit_count()
                 # Another dirty rendering trick for VTK and ParaView
-                count_history[x][0] = count_history[x][1] = value * num_populations
+                count_history[x][0] += value * num_populations
+                count_history[x][1] += value * num_populations
         elif self.lattice.num_dims == 2:
             count_history = np.zeros(
                 (self.lattice.num_gridpoints[0] + 1, self.lattice.num_gridpoints[1] + 1)
@@ -90,7 +91,7 @@ class SpaceTimeResult(QBMResult):
                     (1 << dimension_bit_counts[1]) - 1
                 )
                 num_populations = (key >> num_grid_bits).bit_count()
-                count_history[x][y] = value * num_populations
+                count_history[x][y] += value * num_populations
         else:
             raise ResultsException(
                 f"Space-Time results are not supported for lattices with {self.lattice.num_dims} dimensions."

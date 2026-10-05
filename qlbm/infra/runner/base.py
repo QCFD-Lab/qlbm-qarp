@@ -6,6 +6,7 @@ from logging import Logger, getLogger
 from qlbm.infra.reinitialize.base import Reinitializer
 from qlbm.infra.result.base import QBMResult
 from qlbm.lattice import Lattice
+from qlbm.tools.exceptions import ExecutionException
 
 from .simulation_config import SimulationConfig
 
@@ -26,7 +27,7 @@ class CircuitRunner(ABC):
     :attr:`config`              The :class:`.SimulationConfig` containing the simulation information.
     :attr:`lattice`             The :class:`.Lattice` of the simulated system.
     :attr:`reinitializer`       The :class:`.Reinitializer` that performs the transition between time steps.
-    :attr:`device`              Currently ignored.
+    :attr:`device`              The simulation device; only ``"CPU"`` is supported.
     :attr:`logger`              The performance logger, by default ``getLogger("qlbm")``.
     =========================== ======================================================================
     """
@@ -39,7 +40,10 @@ class CircuitRunner(ABC):
         device: str = "CPU",  # ! TODO reimplement
     ) -> None:
         super().__init__()
-
+        if device != "CPU":
+            raise ExecutionException(
+                f"Unsupported device {device!r}. Only 'CPU' is supported."
+            )
         self.config = config
         self.lattice = lattice
         self.logger = logger

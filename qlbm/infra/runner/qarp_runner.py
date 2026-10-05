@@ -18,7 +18,7 @@ from qlbm.lattice import Lattice
 from qlbm.tools.exceptions import ExecutionException
 
 from .base import CircuitRunner
-from .simulation_config import SimulationConfig
+from .simulation_config import SimulationConfig, resolve_shots
 
 # Carried states lose norm to rounding every step, and qarpx rejects an
 # initial state more than 1e-10 off; drift up to this bound is renormalised.
@@ -41,7 +41,7 @@ class QarpRunner(CircuitRunner):
     :attr:`config`              The :class:`.SimulationConfig` containing the simulation information.
     :attr:`lattice`             The :class:`.Lattice` of the simulated system.
     :attr:`reinitializer`       The :class:`.Reinitializer` that performs the transition between time steps.
-    :attr:`device`              Currently ignored.
+    :attr:`device`              The simulation device; only ``"CPU"`` is supported.
     :attr:`seed`                Base RNG seed for shot sampling; ``None`` samples nondeterministically.
     :attr:`logger`              The performance logger, by default ``getLogger("qlbm")``.
     =========================== ======================================================================
@@ -62,9 +62,11 @@ class QarpRunner(CircuitRunner):
         self.num_qubits = self.__infer_num_qubits()
         # The measurement component declares the (qubit, cbit) pairs; counts are keyed on the cbits.
         self.measure_pairs = self.__measure_pairs()
-        self.num_cbits = (
-            max(cbit for _, cbit in self.measure_pairs) + 1 if self.measure_pairs else 0
-        )
+        if not self.measure_pairs:
+            raise ExecutionException(
+                "The measurement component has no measure commands, so there is nothing to sample."
+            )
+        self.num_cbits = max(cbit for _, cbit in self.measure_pairs) + 1
         # The measurement component may rotate or prepare qubits before its
         # ``measure`` commands, so its gates belong to the sampled circuit.
         self.sampling_ket = CompositeBlock(
@@ -116,11 +118,7 @@ class QarpRunner(CircuitRunner):
                 "time steps, which only the snapshot loop performs: run with "
                 "statevector_snapshots=True."
             )
-        shots = self.config.shots if num_shots is None else num_shots
-        if shots is not EXACT and (not isinstance(shots, int) or shots < 1):
-            raise ExecutionException(
-                f"Unsupported shot budget {shots}. Provide a positive integer or qarp.EXACT."
-            )
+        shots = resolve_shots(self.config.shots if num_shots is None else num_shots)
         simulation_result = self.new_result(output_directory, output_file_name)
         simulation_result.visualize_geometry()
 

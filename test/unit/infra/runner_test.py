@@ -237,13 +237,29 @@ class TestRunArguments:
 
         assert budgets == [(256, 256)] * 3
 
-    @pytest.mark.parametrize("num_shots", [0, -5, 2.5])
+    @pytest.mark.parametrize("num_shots", [0, -5, 2.5, True])
     def test_invalid_shot_budget_is_rejected(self, lattice, tmp_path, num_shots):
         """A non-positive or fractional budget fails before anything runs."""
         runner = QarpRunner(build_config(lattice), lattice, seed=2)
 
         with pytest.raises(ExecutionException, match="shot budget"):
             runner.run(1, num_shots, str(tmp_path), statevector_snapshots=True)
+
+    def test_numpy_integer_shot_budget_is_sampled(self, lattice, tmp_path, monkeypatch):
+        """A numpy integer budget reaches the sampler as a built-in int."""
+        runner = QarpRunner(build_config(lattice), lattice, seed=2)
+        budgets = []
+        sample = runner._sample
+
+        def record(statevector, num_shots, step):
+            counts = sample(statevector, num_shots, step)
+            budgets.append((type(num_shots), sum(counts.values())))
+            return counts
+
+        monkeypatch.setattr(runner, "_sample", record)
+        runner.run(1, np.int64(32), str(tmp_path), statevector_snapshots=True)  # type: ignore[arg-type]
+
+        assert budgets == [(int, 32)] * 2
 
     def test_step_seeds_are_reproducible_and_distinct(self, lattice):
         """A seed fixes every step's stream; neighbouring seeds share none."""
@@ -275,3 +291,28 @@ class TestRunnerSurface:
 
         assert runner.num_cbits == lattice.num_base_qubits
         assert runner.num_qubits == lattice.n_qubits
+
+    @pytest.mark.parametrize("gates", [[], [0]], ids=["empty", "gates_only"])
+    def test_measurement_without_measure_commands_is_rejected(self, lattice, gates):
+        """A measurement component that measures nothing fails at construction."""
+        builder = CircuitBuilder(lattice.n_qubits, name="gates_only")
+        for qubit in gates:
+            builder.x(qubit)
+        config = SimulationConfig(
+            initial_conditions=LQGLAInitialConditions(lattice, GRID_DATA),
+            algorithm=LQLGA(lattice),
+            postprocessing=EmptyPrimitive(lattice),
+            measurement=builder.build() if gates else EmptyPrimitive(lattice),
+            shots=16,
+        )
+        config.validate()
+        config.prepare_for_simulation()
+
+        with pytest.raises(ExecutionException, match="no measure commands"):
+            QarpRunner(config, lattice)
+
+    @pytest.mark.parametrize("device", ["GPU", "cpu", ""])
+    def test_unsupported_device_is_rejected(self, lattice, device):
+        """Only the CPU simulator exists; any other device fails at construction."""
+        with pytest.raises(ExecutionException, match="device"):
+            QarpRunner(build_config(lattice), lattice, device=device)

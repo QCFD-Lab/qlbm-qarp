@@ -97,15 +97,23 @@ def test_unsupported_optimization_level_is_rejected(
     assert "optimization level" in str(excinfo.value)
 
 
-@pytest.mark.parametrize("shots", [0, -1, 2.5, "many", None])
+@pytest.mark.parametrize("shots", [0, -1, 2.5, "many", None, True, np.float64(32.0)])
 def test_unsupported_shot_budget_is_rejected(symmetric_2d_no_osbtacle_circuits, shots):
-    """Validation rejects shot budgets that are neither positive ints nor EXACT."""
+    """Validation rejects shot budgets that are neither positive whole numbers nor EXACT."""
     cfg = SimulationConfig(**symmetric_2d_no_osbtacle_circuits, shots=shots)
 
     with pytest.raises(ExecutionException) as excinfo:
         cfg.validate()
 
     assert "shot budget" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("shots", [np.int64(32), np.uint8(7), np.int32(1)])
+def test_numpy_integer_shot_budget_validates(symmetric_2d_no_osbtacle_circuits, shots):
+    """Validation accepts a positive whole number of any integral type."""
+    cfg = SimulationConfig(**symmetric_2d_no_osbtacle_circuits, shots=shots)
+
+    cfg.validate()
 
 
 @pytest.mark.parametrize("attribute", CIRCUIT_ATTRIBUTES)

@@ -2,11 +2,11 @@
 
 from typing import List, Sequence
 
-from qarp.blocks import AnyBlock, QFTBlock
+from qarp.blocks import AnyBlock, CompositeBlock, QFTBlock
 from typing_extensions import override
 
 from qlbm.components.ab.encodings import ABEncodingType
-from qlbm.components.base import LBMOperator, controlled
+from qlbm.components.base import LBMOperator, controlled, on
 from qlbm.components.common.adders import PhaseShift
 from qlbm.lattice.lattices.base import AmplitudeLattice
 from qlbm.lattice.spacetime.properties_base import LatticeDiscretization
@@ -148,7 +148,9 @@ class ABStreamingOperator(LBMOperator):
             STREAMING_POPULATIONS[discretization]
         ):
             grid_index = self.lattice.grid_index(dim)
-            self.place(QFTBlock(len(grid_index)), grid_index)
+            # One block per dimension: QFT, phase shifts and inverse QFT are a
+            # basis-state permutation together, and none of them is on its own.
+            shift = [on(QFTBlock(len(grid_index)), grid_index)]
             for direction, indices in enumerate(dim_population_to_update):
                 positive = direction == 0
                 for index in indices:
@@ -168,7 +170,7 @@ class ABStreamingOperator(LBMOperator):
                             raise LatticeException(
                                 f"Unsupported lattice encoding: {self.lattice.get_encoding()}"
                             )
-                    self.place(
+                    shift.append(
                         controlled_phase_shift(
                             len(grid_index),
                             positive,
@@ -177,7 +179,8 @@ class ABStreamingOperator(LBMOperator):
                             inverted,
                         )
                     )
-            self.place(~QFTBlock(len(grid_index)), grid_index)
+            shift.append(on(~QFTBlock(len(grid_index)), grid_index))
+            self.place(CompositeBlock(shift, self.n_qubits))
 
     @override
     def __str__(self) -> str:
