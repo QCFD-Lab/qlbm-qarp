@@ -3,7 +3,7 @@
 from logging import getLogger
 from typing import Dict, List, Tuple, cast
 
-from qarp.blocks import AnyBlock, CompositeBlock, QFTBlock, SimpleBlock
+from qarp.blocks import AnyBlock, CompositeBlock, SimpleBlock
 from typing_extensions import override
 
 from qlbm.components.ab.reflection.common import (
@@ -13,11 +13,18 @@ from qlbm.components.ab.reflection.common import (
 from qlbm.components.ab.streaming import (
     STREAMING_POPULATIONS,
     ABStreamingOperator,
-    controlled_phase_shift,
+    shift_term,
     velocity_qubits_to_invert,
 )
-from qlbm.components.base import LBMOperator, controlled, flip_if, on, x_layer
-from qlbm.components.common.adders import ParameterizedDraperAdder
+from qlbm.components.base import (
+    LBMOperator,
+    SequenceBlock,
+    controlled,
+    flip_if,
+    on,
+    x_layer,
+)
+from qlbm.components.common.adders import ParameterizedDraperAdder, StreamingShift
 from qlbm.components.common.arithmetic import RGQFTMultiplier
 from qlbm.components.common.comparators import (
     SingleRegisterComparator,
@@ -116,7 +123,7 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
             [
                 oracle,
                 self.permute_and_stream_bounceback(),
-                ~ABStreamingOperator(self.lattice),
+                ABStreamingOperator(self.lattice, inverse=True),
                 oracle,
                 ABStreamingOperator(self.lattice),
             ],
@@ -144,7 +151,7 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
                 # Step 4: Dim-selective stream for diagonals (ctrl a_o AND a_{d+1})
                 self.__dim_selective_stream(),
                 # Step 5: Inverse stream
-                ~ABStreamingOperator(self.lattice),
+                ABStreamingOperator(self.lattice, inverse=True),
                 # Step 6: SR check in the positive direction
                 ABZoneAgnosticSRCheck(
                     self.lattice,
@@ -177,7 +184,7 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
             [
                 oracle,
                 self.permute_and_stream_bounceback(),
-                ~ABStreamingOperator(self.lattice),
+                ABStreamingOperator(self.lattice, inverse=True),
                 oracle,
                 ABStreamingOperator(self.lattice),
             ],
@@ -267,50 +274,46 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
         obstacle = self.lattice.ancillae_obstacle_index()
         last, middle = obstacle[-1], obstacle[1:-1]
         velocity = self.lattice.velocity_index()
+        controls = obstacle + velocity
         children = []
 
         for dim, dim_population_to_update in enumerate(
             STREAMING_POPULATIONS[LatticeDiscretization.D2Q9]
         ):
             grid_index = self.lattice.grid_index(dim)
-            control_qubits = (
+            wall_controls = (
                 self.lattice.ancillae_obstacle_index(0)  # a_{o, 0}
                 + self.lattice.ancillae_obstacle_index(dim + 1)  # a_{o, x/y}
                 + [last]  # a_{o, xy}, required |0>
                 + velocity
             )
-            children.append(on(QFTBlock(len(grid_index)), grid_index))
-            for direction, indices in enumerate(dim_population_to_update):
-                for index in indices:
-                    children.append(
-                        controlled_phase_shift(
-                            len(grid_index),
-                            direction == 0,
-                            control_qubits,
-                            grid_index,
-                            [last] + velocity_qubits_to_invert(self.lattice, index),
-                        )
-                    )
-
-        # Now diagonal velocities that hit a concave corner: control on |001> of (a_x, a_y, a_xy)
-        for diagonal_velocity, positive_in_dim in DIAGONAL_VELOCITIES.items():
-            for dim in range(self.lattice.num_dims):
-                grid_index = self.lattice.grid_index(dim)
-                children.append(
-                    controlled_phase_shift(
-                        len(grid_index),
-                        positive_in_dim[dim],
-                        obstacle + velocity,
-                        grid_index,
-                        middle
-                        + velocity_qubits_to_invert(self.lattice, diagonal_velocity),
-                    )
+            shifts = [
+                shift_term(
+                    direction == 0,
+                    controls,
+                    wall_controls,
+                    [last] + velocity_qubits_to_invert(self.lattice, index),
                 )
-
-        for dim in range(self.lattice.num_dims):
-            grid_index = self.lattice.grid_index(dim)
-            children.append(on(~QFTBlock(len(grid_index)), grid_index))
-        return CompositeBlock(children, self.n_qubits, name="ab_agnostic_dim_stream")
+                for direction, indices in enumerate(dim_population_to_update)
+                for index in indices
+            ]
+            # Diagonal velocities that hit a concave corner: control on |001> of (a_x, a_y, a_xy)
+            shifts += [
+                shift_term(
+                    positive_in_dim[dim],
+                    controls,
+                    controls,
+                    middle + velocity_qubits_to_invert(self.lattice, diagonal_velocity),
+                )
+                for diagonal_velocity, positive_in_dim in DIAGONAL_VELOCITIES.items()
+            ]
+            children.append(
+                on(
+                    StreamingShift(len(grid_index), len(controls), shifts),
+                    controls + grid_index,
+                )
+            )
+        return SequenceBlock(children, self.n_qubits, name="ab_agnostic_dim_stream")
 
     def permute_and_stream_bounceback(self) -> AnyBlock:
         """
@@ -321,7 +324,7 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
         AnyBlock
             The block over the full lattice width.
         """
-        return CompositeBlock(
+        return SequenceBlock(
             [
                 # Permute the velocities according to reflection rules
                 on(
@@ -713,10 +716,8 @@ class ABZoneAgnosticSRCheck(LBMOperator):
 
     def __place_streaming(self, dim: int, unstream: bool) -> None:
         grid_index = self.lattice.grid_index(dim)
-        control_qubits = (
-            self.additional_control_qubit_indices + self.lattice.velocity_index()
-        )
-        self.place(QFTBlock(len(grid_index)), grid_index)
+        controls = self.additional_control_qubit_indices + self.lattice.velocity_index()
+        shifts = []
         for velocity_idx, vel_signs in self.sr_velocities_to_unstream[
             self.discretization
         ].items():
@@ -725,16 +726,18 @@ class ABZoneAgnosticSRCheck(LBMOperator):
                 continue
             # Unstream = reverse the streaming direction for this dim, restream = original
             positive = sign ^ (not unstream) ^ self.check_negative_direction
-            self.place(
-                controlled_phase_shift(
-                    len(grid_index),
+            shifts.append(
+                shift_term(
                     positive,
-                    control_qubits,
-                    grid_index,
+                    controls,
+                    controls,
                     velocity_qubits_to_invert(self.lattice, velocity_idx),
                 )
             )
-        self.place(~QFTBlock(len(grid_index)), grid_index)
+        self.place(
+            StreamingShift(len(grid_index), len(controls), shifts),
+            controls + grid_index,
+        )
 
     def __build_oracle_for_dim(self, dim: int) -> AnyBlock:
         return CompositeBlock(

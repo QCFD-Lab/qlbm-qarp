@@ -1,13 +1,13 @@
 """Quantum circuits used for streaming in the :class:`ABQLBM` algorithm."""
 
-from typing import List, Sequence
+from typing import Iterable, List, Sequence, Tuple
 
-from qarp.blocks import AnyBlock, CompositeBlock, QFTBlock
+from qarp.blocks import AnyBlock
 from typing_extensions import override
 
 from qlbm.components.ab.encodings import ABEncodingType
-from qlbm.components.base import LBMOperator, controlled, on
-from qlbm.components.common.adders import PhaseShift
+from qlbm.components.base import LBMOperator
+from qlbm.components.common.adders import StreamingShift
 from qlbm.lattice.lattices.base import AmplitudeLattice
 from qlbm.lattice.spacetime.properties_base import LatticeDiscretization
 from qlbm.tools.exceptions import LatticeException
@@ -48,40 +48,36 @@ def velocity_qubits_to_invert(
     ]
 
 
-def controlled_phase_shift(
-    num_qubits: int,
+def shift_term(
     positive: bool,
-    control_qubits: Sequence[int],
-    target_qubits: Sequence[int],
-    inverted: Sequence[int] = (),
-) -> AnyBlock:
+    controls: Sequence[int],
+    on_qubits: Sequence[int],
+    inverted: Iterable[int] = (),
+) -> Tuple[bool, List[int], List[bool]]:
     r"""
-    The streaming phase shift on ``target_qubits`` (in the Fourier basis), controlled on ``control_qubits``.
+    One shift of a :class:`.StreamingShift` whose control qubits are ``controls``.
 
     Parameters
     ----------
-    num_qubits : int
-        The width of the phase shift.
     positive : bool
         Whether to increment or decrement.
-    control_qubits : Sequence[int]
-        The control qubits.
-    target_qubits : Sequence[int]
-        The grid qubits shifted.
-    inverted : Sequence[int]
+    controls : Sequence[int]
+        The parent qubits the shift block is controlled on, in placement order.
+    on_qubits : Sequence[int]
+        The controls this shift is conditioned on, a subset of ``controls``.
+    inverted : Iterable[int]
         The controls active on :math:`\ket{0}`.
 
     Returns
     -------
-    AnyBlock
-        The placed block.
+    Tuple[bool, List[int], List[bool]]
+        The shift in the block's local frame.
     """
     open_controls = set(inverted)
-    return controlled(
-        PhaseShift(num_qubits, positive),
-        control_qubits,
-        target_qubits,
-        ctrl_state=[qubit not in open_controls for qubit in control_qubits],
+    return (
+        positive,
+        [controls.index(qubit) for qubit in on_qubits],
+        [qubit not in open_controls for qubit in on_qubits],
     )
 
 
@@ -124,12 +120,17 @@ class ABStreamingOperator(LBMOperator):
     This makes the operator useful for the application of boundary conditions.
     Controls need only be applied to the phase gates and not the QFT blocks."""
 
+    inverse: bool
+    """Whether to stream every population backwards, undoing the forward operator."""
+
     def __init__(
         self,
         lattice: AmplitudeLattice,
         additional_control_qubit_indices: List[int] = [],
+        inverse: bool = False,
     ) -> None:
         self.additional_control_qubit_indices = additional_control_qubit_indices
+        self.inverse = inverse
         super().__init__(lattice)
 
     @override
@@ -143,44 +144,62 @@ class ABStreamingOperator(LBMOperator):
             if discretization == LatticeDiscretization.D2Q9
             else ABEncodingType.AB
         )
+        if encoding not in (ABEncodingType.AB, ABEncodingType.OH):
+            raise LatticeException(
+                f"Unsupported lattice encoding: {self.lattice.get_encoding()}"
+            )
 
         for dim, dim_population_to_update in enumerate(
             STREAMING_POPULATIONS[discretization]
         ):
             grid_index = self.lattice.grid_index(dim)
-            # One block per dimension: QFT, phase shifts and inverse QFT are a
-            # basis-state permutation together, and none of them is on its own.
-            shift = [on(QFTBlock(len(grid_index)), grid_index)]
-            for direction, indices in enumerate(dim_population_to_update):
-                positive = direction == 0
-                for index in indices:
-                    match encoding:
-                        case ABEncodingType.OH:
-                            control_qubits = self.additional_control_qubit_indices + [
-                                self.lattice.velocity_index()[index]
-                            ]
-                            inverted: List[int] = []
-                        case ABEncodingType.AB:
-                            control_qubits = (
-                                self.additional_control_qubit_indices
-                                + self.lattice.velocity_index()
-                            )
-                            inverted = velocity_qubits_to_invert(self.lattice, index)
-                        case _:
-                            raise LatticeException(
-                                f"Unsupported lattice encoding: {self.lattice.get_encoding()}"
-                            )
-                    shift.append(
-                        controlled_phase_shift(
-                            len(grid_index),
+            controls, shifts = self._shifts(dim_population_to_update, encoding)
+            self.place(
+                StreamingShift(len(grid_index), len(controls), shifts),
+                controls + grid_index,
+            )
+
+    def _shifts(
+        self, populations: Sequence[Sequence[int]], encoding: ABEncodingType
+    ) -> Tuple[List[int], List[Tuple[bool, List[int], List[bool]]]]:
+        """The control qubits of one dimension's shift and its shifts, one per population."""
+        extra = self.additional_control_qubit_indices
+        velocity = self.lattice.velocity_index()
+        if encoding == ABEncodingType.OH:
+            controls = extra + [
+                velocity[index] for indices in populations for index in indices
+            ]
+        else:
+            controls = extra + velocity
+        shifts = []
+        for direction, indices in enumerate(populations):
+            positive = (direction == 0) != self.inverse
+            for index in indices:
+                if encoding == ABEncodingType.OH:
+                    shifts.append(
+                        shift_term(positive, controls, extra + [velocity[index]])
+                    )
+                else:
+                    shifts.append(
+                        shift_term(
                             positive,
-                            control_qubits,
-                            grid_index,
-                            inverted,
+                            controls,
+                            controls,
+                            velocity_qubits_to_invert(self.lattice, index),
                         )
                     )
-            shift.append(on(~QFTBlock(len(grid_index)), grid_index))
-            self.place(CompositeBlock(shift, self.n_qubits))
+        return controls, shifts
+
+    def structure(self) -> List[AnyBlock]:
+        """
+        The per-dimension shifts in order, declared for qarp's structured execution.
+
+        Returns
+        -------
+        List[AnyBlock]
+            The children of this operator.
+        """
+        return list(self.children())
 
     @override
     def __str__(self) -> str:

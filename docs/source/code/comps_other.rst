@@ -26,6 +26,8 @@ Arithmetic
 
 .. autoclass:: qlbm.components.common.ParameterizedPhaseShift
 
+.. autoclass:: qlbm.components.common.StreamingShift
+
 
 Miscellaneous
 ----------------------------------

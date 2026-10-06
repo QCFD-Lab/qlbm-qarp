@@ -2,11 +2,11 @@
 
 from typing import List
 
-from qarp.blocks import CompositeBlock, QFTBlock
+from qarp.blocks import AnyBlock
 from typing_extensions import override
 
-from qlbm.components.base import LatticePrimitive, LBMOperator, controlled, on
-from qlbm.components.common.adders import PhaseShift
+from qlbm.components.base import LatticePrimitive, LBMOperator
+from qlbm.components.common.adders import StreamingShift
 from qlbm.lattice import MSLattice
 from qlbm.tools import CircuitException, bit_value
 
@@ -135,7 +135,6 @@ class ControlledIncrementer(LBMOperator):
     @override
     def build_vanilla(self) -> None:
         for dim in range(self.lattice.num_dims):
-            num_qubits_dim = self.lattice.num_gridpoints[dim].bit_length()
             grid_index = self.lattice.grid_index(dim)
             direction = self.lattice.velocity_dir_index(dim)
 
@@ -148,26 +147,35 @@ class ControlledIncrementer(LBMOperator):
                 case _:
                     ancilla = self.lattice.ancillae_velocity_index(dim)
             control_qubits = ancilla + direction
+            controls = list(range(len(control_qubits)))
 
-            # One block per dimension: QFT, phase shifts and inverse QFT are a
-            # basis-state permutation together, and none of them is on its own.
             # UP+ when the direction qubit is |1>, UP- when it is |0>
-            shift = [
-                on(QFTBlock(num_qubits_dim), grid_index),
-                controlled(
-                    PhaseShift(len(grid_index), positive=True),
-                    control_qubits,
-                    grid_index,
+            self.place(
+                StreamingShift(
+                    len(grid_index),
+                    len(control_qubits),
+                    [
+                        (True, controls, [True] * len(control_qubits)),
+                        (
+                            False,
+                            controls,
+                            [True] * len(ancilla) + [False] * len(direction),
+                        ),
+                    ],
                 ),
-                controlled(
-                    PhaseShift(len(grid_index), positive=False),
-                    control_qubits,
-                    grid_index,
-                    ctrl_state=[True] * len(ancilla) + [False] * len(direction),
-                ),
-                on(~QFTBlock(num_qubits_dim), grid_index),
-            ]
-            self.place(CompositeBlock(shift, self.n_qubits))
+                control_qubits + grid_index,
+            )
+
+    def structure(self) -> List[AnyBlock]:
+        """
+        The per-dimension shifts in order, declared for qarp's structured execution.
+
+        Returns
+        -------
+        List[AnyBlock]
+            The children of this primitive.
+        """
+        return list(self.children())
 
     @override
     def __str__(self) -> str:

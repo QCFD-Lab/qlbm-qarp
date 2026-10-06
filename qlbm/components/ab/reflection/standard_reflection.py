@@ -3,7 +3,7 @@
 from itertools import product
 from typing import Dict, List, Tuple, cast
 
-from qarp.blocks import AnyBlock, CompositeBlock, QFTBlock
+from qarp.blocks import AnyBlock, CompositeBlock
 from typing_extensions import override
 
 from qlbm.components.ab.encodings import ABEncodingType
@@ -14,10 +14,11 @@ from qlbm.components.ab.reflection.common import (
 from qlbm.components.ab.streaming import (
     STREAMING_POPULATIONS,
     ABStreamingOperator,
-    controlled_phase_shift,
+    shift_term,
     velocity_qubits_to_invert,
 )
-from qlbm.components.base import LBMOperator, flip_if, on
+from qlbm.components.base import LBMOperator, SequenceBlock, flip_if, on
+from qlbm.components.common.adders import StreamingShift
 from qlbm.components.ms.specular_reflection import SpecularWallComparator
 from qlbm.lattice.geometry.encodings.ms import ReflectionPoint, ReflectionWall
 from qlbm.lattice.geometry.shapes.base import Shape
@@ -366,7 +367,7 @@ class ABBounceBackReflectionOperator(LBMOperator):
         AnyBlock
             The block over the full lattice width.
         """
-        return CompositeBlock(
+        return SequenceBlock(
             [
                 on(
                     ABBounceBackReflectionPermutation(
@@ -536,24 +537,27 @@ class ABSpecularReflectionOperator(LBMOperator):
             STREAMING_POPULATIONS[LatticeDiscretization.D2Q9]
         ):
             grid_index = self.lattice.grid_index(dim)
-            control_qubits = (
+            controls = (
                 self.lattice.ancillae_obstacle_index(dim)
                 + self.lattice.velocity_index()
             )
-            children.append(on(QFTBlock(len(grid_index)), grid_index))
-            for direction, indices in enumerate(dim_population_to_update):
-                for index in indices:
-                    children.append(
-                        controlled_phase_shift(
-                            len(grid_index),
-                            direction == 0,
-                            control_qubits,
-                            grid_index,
-                            velocity_qubits_to_invert(self.lattice, index),
-                        )
-                    )
-            children.append(on(~QFTBlock(len(grid_index)), grid_index))
-        return CompositeBlock(children, self.n_qubits, name="ab_sr_stream")
+            shifts = [
+                shift_term(
+                    direction == 0,
+                    controls,
+                    controls,
+                    velocity_qubits_to_invert(self.lattice, index),
+                )
+                for direction, indices in enumerate(dim_population_to_update)
+                for index in indices
+            ]
+            children.append(
+                on(
+                    StreamingShift(len(grid_index), len(controls), shifts),
+                    controls + grid_index,
+                )
+            )
+        return SequenceBlock(children, self.n_qubits, name="ab_sr_stream")
 
     def _reset_outside_wall_ancilla_per_dim(self, block: Block, dim: int) -> AnyBlock:
         children = []
