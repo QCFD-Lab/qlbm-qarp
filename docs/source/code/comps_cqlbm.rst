@@ -92,7 +92,7 @@ Streaming
 
 .. autoclass:: qlbm.components.ms.streaming.ControlledIncrementer
 
-.. autoclass:: qlbm.components.ms.streaming.PhaseShift
+.. autoclass:: qlbm.components.common.PhaseShift
 
 .. autoclass:: qlbm.components.ab.streaming.ABStreamingOperator
 
