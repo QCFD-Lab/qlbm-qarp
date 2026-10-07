@@ -13,7 +13,6 @@ from qlbm.components.ab.reflection.common import (
 from qlbm.components.ab.streaming import (
     STREAMING_POPULATIONS,
     ABStreamingOperator,
-    shift_term,
     velocity_qubits_to_invert,
 )
 from qlbm.components.base import (
@@ -24,7 +23,11 @@ from qlbm.components.base import (
     on,
     x_layer,
 )
-from qlbm.components.common.adders import ParameterizedDraperAdder, StreamingShift
+from qlbm.components.common.adders import (
+    ParameterizedDraperAdder,
+    StreamingShift,
+    shift_on,
+)
 from qlbm.components.common.arithmetic import RGQFTMultiplier
 from qlbm.components.common.comparators import (
     SingleRegisterComparator,
@@ -288,7 +291,7 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
                 + velocity
             )
             shifts = [
-                shift_term(
+                shift_on(
                     direction == 0,
                     controls,
                     wall_controls,
@@ -299,7 +302,7 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
             ]
             # Diagonal velocities that hit a concave corner: control on |001> of (a_x, a_y, a_xy)
             shifts += [
-                shift_term(
+                shift_on(
                     positive_in_dim[dim],
                     controls,
                     controls,
@@ -727,7 +730,7 @@ class ABZoneAgnosticSRCheck(LBMOperator):
             # Unstream = reverse the streaming direction for this dim, restream = original
             positive = sign ^ (not unstream) ^ self.check_negative_direction
             shifts.append(
-                shift_term(
+                shift_on(
                     positive,
                     controls,
                     controls,

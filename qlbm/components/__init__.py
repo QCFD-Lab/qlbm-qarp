@@ -20,6 +20,7 @@ from .base import (
     LBMComposite,
     LBMOperator,
     LBMPrimitive,
+    SequenceBlock,
 )
 from .common import (
     EmptyPrimitive,
@@ -28,7 +29,12 @@ from .common import (
     EQCRedistribution,
     HammingWeightAdder,
 )
-from .common.adders import ParameterizedDraperAdder, ParameterizedPhaseShift, PhaseShift
+from .common.adders import (
+    ParameterizedDraperAdder,
+    ParameterizedPhaseShift,
+    PhaseShift,
+    StreamingShift,
+)
 from .common.comparators import SingleRegisterComparator
 from .cqlbm import CQLBM
 from .lqlga import (
@@ -58,6 +64,7 @@ __all__ = [
     "LatticePrimitive",
     "LBMComposite",
     "ControllableComponent",
+    "SequenceBlock",
     "GenericLQLGACollisionOperator",
     "LBMOperator",
     "LBMAlgorithm",
@@ -65,6 +72,7 @@ __all__ = [
     "ParameterizedDraperAdder",
     "PhaseShift",
     "ParameterizedPhaseShift",
+    "StreamingShift",
     "EmptyPrimitive",
     "StreamingAncillaPreparation",
     "ControlledIncrementer",

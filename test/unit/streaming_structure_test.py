@@ -102,7 +102,7 @@ def test_specular_reflection_streams_with_one_shift_per_dimension():
 
 
 def test_zone_agnostic_reflection_streams_with_one_shift_per_dimension():
-    """The dimension-selective stream is a sequence of per-dimension shifts."""
+    """On a specular lattice the dimension-selective stream is a sequence of per-dimension shifts."""
     lattice = specular_lattice()
 
     operator = ABZoneAgnosticReflectionOperator(lattice)

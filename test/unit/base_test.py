@@ -110,6 +110,16 @@ def test_sequence_block_declares_its_children_as_parts():
     assert SequenceBlock([first, second], 3).structure() == [first, second]
 
 
+def test_sequence_block_parts_are_built_before_the_sequence_is():
+    """The planner flattens the parts of an unbuilt sequence, so they are built."""
+    inner = Placed(2, [(XnBlock(1), [0])])
+    sequence = SequenceBlock([on(inner, [1, 2]), on(XnBlock(1), [0])], 3)
+
+    parts = sequence.structure()
+
+    assert [len(part.flatten()) for part in parts] == [1, 1]
+
+
 def test_x_layer_flips_every_listed_qubit():
     """``x_layer([0, 2])`` flips bits 0 and 2."""
     block = Placed(3, [(x_layer([0, 2]), None)])

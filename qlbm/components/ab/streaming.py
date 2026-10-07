@@ -1,13 +1,13 @@
 """Quantum circuits used for streaming in the :class:`ABQLBM` algorithm."""
 
-from typing import Iterable, List, Sequence, Tuple
+from typing import List, Sequence, Tuple
 
 from qarp.blocks import AnyBlock
 from typing_extensions import override
 
 from qlbm.components.ab.encodings import ABEncodingType
 from qlbm.components.base import LBMOperator
-from qlbm.components.common.adders import StreamingShift
+from qlbm.components.common.adders import ShiftTerm, StreamingShift, shift_on
 from qlbm.lattice.lattices.base import AmplitudeLattice
 from qlbm.lattice.spacetime.properties_base import LatticeDiscretization
 from qlbm.tools.exceptions import LatticeException
@@ -46,39 +46,6 @@ def velocity_qubits_to_invert(
         velocity_register[qubit]
         for qubit in get_qubits_to_invert(velocity_index, lattice.num_velocity_qubits)
     ]
-
-
-def shift_term(
-    positive: bool,
-    controls: Sequence[int],
-    on_qubits: Sequence[int],
-    inverted: Iterable[int] = (),
-) -> Tuple[bool, List[int], List[bool]]:
-    r"""
-    One shift of a :class:`.StreamingShift` whose control qubits are ``controls``.
-
-    Parameters
-    ----------
-    positive : bool
-        Whether to increment or decrement.
-    controls : Sequence[int]
-        The parent qubits the shift block is controlled on, in placement order.
-    on_qubits : Sequence[int]
-        The controls this shift is conditioned on, a subset of ``controls``.
-    inverted : Iterable[int]
-        The controls active on :math:`\ket{0}`.
-
-    Returns
-    -------
-    Tuple[bool, List[int], List[bool]]
-        The shift in the block's local frame.
-    """
-    open_controls = set(inverted)
-    return (
-        positive,
-        [controls.index(qubit) for qubit in on_qubits],
-        [qubit not in open_controls for qubit in on_qubits],
-    )
 
 
 class ABStreamingOperator(LBMOperator):
@@ -161,7 +128,7 @@ class ABStreamingOperator(LBMOperator):
 
     def _shifts(
         self, populations: Sequence[Sequence[int]], encoding: ABEncodingType
-    ) -> Tuple[List[int], List[Tuple[bool, List[int], List[bool]]]]:
+    ) -> Tuple[List[int], List[ShiftTerm]]:
         """The control qubits of one dimension's shift and its shifts, one per population."""
         extra = self.additional_control_qubit_indices
         velocity = self.lattice.velocity_index()
@@ -177,11 +144,11 @@ class ABStreamingOperator(LBMOperator):
             for index in indices:
                 if encoding == ABEncodingType.OH:
                     shifts.append(
-                        shift_term(positive, controls, extra + [velocity[index]])
+                        shift_on(positive, controls, extra + [velocity[index]])
                     )
                 else:
                     shifts.append(
-                        shift_term(
+                        shift_on(
                             positive,
                             controls,
                             controls,

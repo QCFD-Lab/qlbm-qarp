@@ -1,7 +1,7 @@
 """Circuits implementing components of quantum adders. See :cite:`draper` and :cite:`adder`."""
 
 from math import pi
-from typing import List, Sequence, Tuple
+from typing import Iterable, NamedTuple, Sequence, Tuple
 
 import numpy as np
 from qarp.blocks import QFTBlock, SimpleBlock
@@ -9,6 +9,52 @@ from typing_extensions import override
 
 from qlbm.components.base import ControllableComponent, LBMComposite, LBMPrimitive
 from qlbm.tools import bit_value
+
+
+class ShiftTerm(NamedTuple):
+    """One shift of a :class:`StreamingShift`, in the block's local frame."""
+
+    positive: bool
+    """Whether the register moves up (``True``) or down."""
+
+    controls: Tuple[int, ...]
+    """The control qubits the shift is conditioned on, as local indices."""
+
+    ctrl_state: Tuple[bool, ...]
+    """The control values that activate the shift."""
+
+
+def shift_on(
+    positive: bool,
+    controls: Sequence[int],
+    on_qubits: Sequence[int],
+    inverted: Iterable[int] = (),
+) -> ShiftTerm:
+    r"""
+    A shift of a :class:`StreamingShift` whose control qubits are ``controls``.
+
+    Parameters
+    ----------
+    positive : bool
+        Whether to increment or decrement.
+    controls : Sequence[int]
+        The parent qubits the shift block is controlled on, in placement order.
+    on_qubits : Sequence[int]
+        The controls this shift is conditioned on, a subset of ``controls``.
+    inverted : Iterable[int]
+        The controls active on :math:`\ket{0}`.
+
+    Returns
+    -------
+    ShiftTerm
+        The shift in the block's local frame.
+    """
+    open_controls = set(inverted)
+    return ShiftTerm(
+        positive,
+        tuple(controls.index(qubit) for qubit in on_qubits),
+        tuple(qubit not in open_controls for qubit in on_qubits),
+    )
 
 
 class ParameterizedPhaseShift(ControllableComponent):
@@ -163,7 +209,7 @@ class StreamingShift(LBMComposite):
     ========================= ======================================================================
     :attr:`num_qubits`        The number of qubits of the shifted register.
     :attr:`num_ctrl_qubits`   The number of control qubits, which precede the register.
-    :attr:`shifts`            The shifts, each ``(positive, controls, ctrl_state)``.
+    :attr:`shifts`            The shifts, each a :class:`ShiftTerm`.
     ========================= ======================================================================
 
     Example usage:
@@ -183,9 +229,9 @@ class StreamingShift(LBMComposite):
     num_ctrl_qubits: int
     """The number of control qubits, which precede the register."""
 
-    shifts: List[Tuple[bool, List[int], List[bool]]]
-    """The shifts: whether each moves the register up, its control qubits
-    (local indices below :attr:`num_ctrl_qubits`) and the values that activate it."""
+    shifts: Tuple[ShiftTerm, ...]
+    """The shifts, with control indices below :attr:`num_ctrl_qubits`.  Immutable:
+    the declared action must stay the one the gates were built from."""
 
     def __init__(
         self,
@@ -195,10 +241,10 @@ class StreamingShift(LBMComposite):
     ) -> None:
         self.num_qubits = num_qubits
         self.num_ctrl_qubits = num_ctrl_qubits
-        self.shifts = [
-            (bool(positive), list(controls), [bool(value) for value in ctrl_state])
+        self.shifts = tuple(
+            ShiftTerm(bool(positive), tuple(controls), tuple(map(bool, ctrl_state)))
             for positive, controls, ctrl_state in shifts
-        ]
+        )
         super().__init__(num_ctrl_qubits + num_qubits)
 
     @override
@@ -207,7 +253,10 @@ class StreamingShift(LBMComposite):
         self.place(QFTBlock(self.num_qubits), register)
         for positive, controls, ctrl_state in self.shifts:
             self.place_controlled(
-                PhaseShift(self.num_qubits, positive), controls, register, ctrl_state
+                PhaseShift(self.num_qubits, positive),
+                controls,
+                register,
+                ctrl_state,
             )
         self.place(~QFTBlock(self.num_qubits), register)
 

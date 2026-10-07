@@ -4,7 +4,9 @@ from .adders import (
     ParameterizedDraperAdder,
     ParameterizedPhaseShift,
     PhaseShift,
+    ShiftTerm,
     StreamingShift,
+    shift_on,
 )
 from .arithmetic import DraperQFTAdder, RGQFTMultiplier, ccp
 from .cbse_collision import EQCCollisionOperator, EQCPermutation, EQCRedistribution
@@ -32,7 +34,9 @@ __all__ = [
     "ParameterizedDraperAdder",
     "ParameterizedPhaseShift",
     "PhaseShift",
+    "ShiftTerm",
     "StreamingShift",
+    "shift_on",
     "StateSetter",
     "TruncatedQFT",
     "UniformStatePrep",

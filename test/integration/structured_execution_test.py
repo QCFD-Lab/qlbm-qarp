@@ -8,6 +8,7 @@ from qarp.blocks import SimpleBlock
 
 from qlbm.components import CQLBM, MSQLBM
 from qlbm.components.ab import ABQLBM
+from qlbm.components.common import StreamingShift
 from qlbm.lattice import ABLattice, MSLattice
 
 pytestmark = pytest.mark.skipif(
@@ -63,3 +64,25 @@ def test_structured_step_matches_the_gate_path(name):
     gates = step.statevector(initial_state=state, structured=False)
 
     np.testing.assert_allclose(structured, gates, atol=1e-9, rtol=0)
+
+
+@pytest.mark.parametrize("name", STEPS)
+def test_planner_reads_the_declared_shift(name, monkeypatch):
+    """Structured execution takes the shift from its declaration, not from its gates.
+
+    The planner derives a span it cannot read a declaration for, which is
+    correct and slow; this is the one place that would notice.
+    """
+    declared = StreamingShift.classical_action
+    consulted = []
+
+    def spy(self, indices):
+        consulted.append(self)
+        return declared(self, indices)
+
+    monkeypatch.setattr(StreamingShift, "classical_action", spy)
+    step = STEPS[name]()
+
+    step.statevector(structured=True)
+
+    assert len(consulted) >= step.lattice.num_dims

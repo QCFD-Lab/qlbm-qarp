@@ -6,7 +6,7 @@ from qarp.blocks import AnyBlock
 from typing_extensions import override
 
 from qlbm.components.base import LatticePrimitive, LBMOperator
-from qlbm.components.common.adders import StreamingShift
+from qlbm.components.common.adders import StreamingShift, shift_on
 from qlbm.lattice import MSLattice
 from qlbm.tools import CircuitException, bit_value
 
@@ -147,7 +147,6 @@ class ControlledIncrementer(LBMOperator):
                 case _:
                     ancilla = self.lattice.ancillae_velocity_index(dim)
             control_qubits = ancilla + direction
-            controls = list(range(len(control_qubits)))
 
             # UP+ when the direction qubit is |1>, UP- when it is |0>
             self.place(
@@ -155,12 +154,8 @@ class ControlledIncrementer(LBMOperator):
                     len(grid_index),
                     len(control_qubits),
                     [
-                        (True, controls, [True] * len(control_qubits)),
-                        (
-                            False,
-                            controls,
-                            [True] * len(ancilla) + [False] * len(direction),
-                        ),
+                        shift_on(True, control_qubits, control_qubits),
+                        shift_on(False, control_qubits, control_qubits, direction),
                     ],
                 ),
                 control_qubits + grid_index,

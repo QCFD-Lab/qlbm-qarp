@@ -9,6 +9,8 @@ from qlbm.components.common import StreamingShift
 # (num_qubits, num_ctrl_qubits, shifts): every control pattern the sites use.
 SHAPES = [
     (3, 0, [(True, [], [])]),
+    (1, 0, [(True, [], [])]),
+    (1, 1, [(True, [0], [True])]),
     (2, 1, [(True, [0], [True])]),
     (3, 1, [(False, [0], [False])]),
     (3, 2, [(True, [0, 1], [True, False]), (False, [0, 1], [False, True])]),

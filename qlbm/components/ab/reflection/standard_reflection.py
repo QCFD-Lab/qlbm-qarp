@@ -14,11 +14,10 @@ from qlbm.components.ab.reflection.common import (
 from qlbm.components.ab.streaming import (
     STREAMING_POPULATIONS,
     ABStreamingOperator,
-    shift_term,
     velocity_qubits_to_invert,
 )
 from qlbm.components.base import LBMOperator, SequenceBlock, flip_if, on
-from qlbm.components.common.adders import StreamingShift
+from qlbm.components.common.adders import StreamingShift, shift_on
 from qlbm.components.ms.specular_reflection import SpecularWallComparator
 from qlbm.lattice.geometry.encodings.ms import ReflectionPoint, ReflectionWall
 from qlbm.lattice.geometry.shapes.base import Shape
@@ -542,7 +541,7 @@ class ABSpecularReflectionOperator(LBMOperator):
                 + self.lattice.velocity_index()
             )
             shifts = [
-                shift_term(
+                shift_on(
                     direction == 0,
                     controls,
                     controls,

@@ -3,7 +3,9 @@
 Every component is a qarp block: leaves (:class:`LBMPrimitive`) emit gates,
 trees (:class:`LBMComposite`) place child blocks.  Components build on
 construction, so subclasses set every attribute ``build_vanilla`` reads
-before calling ``super().__init__``.
+before calling ``super().__init__``.  A :class:`SequenceBlock` is a plain
+qarp composite over a list of blocks, built by its parent, whose parts are
+declared to structured execution.
 """
 
 from typing import Iterable, List, Optional, Sequence
@@ -145,9 +147,9 @@ class SequenceBlock(CompositeBlock):
         Returns
         -------
         List[AnyBlock]
-            The blocks this sequence was given, built or not.
+            The blocks this sequence was given, built.
         """
-        return list(self.blocks)
+        return [block.build() for block in self.blocks]
 
 
 class LBMPrimitive(SimpleBlock):

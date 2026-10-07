@@ -28,6 +28,10 @@ Arithmetic
 
 .. autoclass:: qlbm.components.common.StreamingShift
 
+.. autoclass:: qlbm.components.common.ShiftTerm
+
+.. autofunction:: qlbm.components.common.shift_on
+
 
 Miscellaneous
 ----------------------------------
