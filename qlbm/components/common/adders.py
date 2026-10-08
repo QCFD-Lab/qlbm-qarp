@@ -260,6 +260,7 @@ class StreamingShift(LBMComposite):
             )
         self.place(~QFTBlock(self.num_qubits), register)
 
+    @override
     def classical_action(self, indices: np.ndarray) -> np.ndarray:
         """
         The image of each basis state, declared for qarp's structured execution.

@@ -17,7 +17,6 @@ from qlbm.components.ab.streaming import (
 )
 from qlbm.components.base import (
     LBMOperator,
-    SequenceBlock,
     controlled,
     flip_if,
     on,
@@ -126,7 +125,7 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
             [
                 oracle,
                 self.permute_and_stream_bounceback(),
-                ABStreamingOperator(self.lattice, inverse=True),
+                ~ABStreamingOperator(self.lattice),
                 oracle,
                 ABStreamingOperator(self.lattice),
             ],
@@ -154,7 +153,7 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
                 # Step 4: Dim-selective stream for diagonals (ctrl a_o AND a_{d+1})
                 self.__dim_selective_stream(),
                 # Step 5: Inverse stream
-                ABStreamingOperator(self.lattice, inverse=True),
+                ~ABStreamingOperator(self.lattice),
                 # Step 6: SR check in the positive direction
                 ABZoneAgnosticSRCheck(
                     self.lattice,
@@ -187,7 +186,7 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
             [
                 oracle,
                 self.permute_and_stream_bounceback(),
-                ABStreamingOperator(self.lattice, inverse=True),
+                ~ABStreamingOperator(self.lattice),
                 oracle,
                 ABStreamingOperator(self.lattice),
             ],
@@ -316,7 +315,7 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
                     controls + grid_index,
                 )
             )
-        return SequenceBlock(children, self.n_qubits, name="ab_agnostic_dim_stream")
+        return CompositeBlock(children, self.n_qubits, name="ab_agnostic_dim_stream")
 
     def permute_and_stream_bounceback(self) -> AnyBlock:
         """
@@ -327,7 +326,7 @@ class ABZoneAgnosticReflectionOperator(LBMOperator):
         AnyBlock
             The block over the full lattice width.
         """
-        return SequenceBlock(
+        return CompositeBlock(
             [
                 # Permute the velocities according to reflection rules
                 on(

@@ -1,20 +1,12 @@
 """A time step gives the same state through qarp's structured execution as through its gates."""
 
-import inspect
-
 import numpy as np
 import pytest
-from qarp.blocks import SimpleBlock
 
 from qlbm.components import CQLBM, MSQLBM
 from qlbm.components.ab import ABQLBM
 from qlbm.components.common import StreamingShift
 from qlbm.lattice import ABLattice, MSLattice
-
-pytestmark = pytest.mark.skipif(
-    "structured" not in inspect.signature(SimpleBlock.statevector).parameters,
-    reason="this openqarp has no structured execution",
-)
 
 CUBOID = {"shape": "cuboid", "x": [5, 8], "y": [2, 5]}
 
@@ -64,6 +56,22 @@ def test_structured_step_matches_the_gate_path(name):
     gates = step.statevector(initial_state=state, structured=False)
 
     np.testing.assert_allclose(structured, gates, atol=1e-9, rtol=0)
+
+
+# Steps whose every gate belongs to a declared or derived permutation.
+PERMUTATION_ONLY = {"ab_bounceback", "ab_specular"}
+
+
+@pytest.mark.parametrize("name", STEPS)
+def test_step_plans_to_permutation_kernels(name):
+    """A step runs as permutation kernels, plus gate runs where comparators remain; never dense."""
+    kinds = STEPS[name]().kernels()
+
+    assert kinds is not None
+    assert "permutation" in kinds
+    assert "dense" not in kinds
+    if name in PERMUTATION_ONLY:
+        assert set(kinds) == {"permutation"}
 
 
 @pytest.mark.parametrize("name", STEPS)

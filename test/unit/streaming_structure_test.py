@@ -3,14 +3,10 @@
 import pytest
 
 from qlbm.components.ab import ABStreamingOperator
-from qlbm.components.ab.reflection.agnosotic_reflection import (
-    ABZoneAgnosticReflectionOperator,
-    ABZoneAgnosticSRCheck,
-)
+from qlbm.components.ab.reflection.agnosotic_reflection import ABZoneAgnosticSRCheck
 from qlbm.components.ab.reflection.standard_reflection import (
     ABSpecularReflectionOperator,
 )
-from qlbm.components.base import SequenceBlock
 from qlbm.components.common import StreamingShift
 from qlbm.components.ms import ControlledIncrementer
 from qlbm.lattice import ABLattice, MSLattice, OHLattice
@@ -55,7 +51,7 @@ MS_LATTICES = [
 
 @pytest.mark.parametrize("lattice_class,dims,velocities", AB_LATTICES)
 def test_ab_streaming_is_one_shift_per_dimension(lattice_class, dims, velocities):
-    """The operator's children are the per-dimension shifts, and so are its parts."""
+    """The operator's children are the per-dimension shifts."""
     lattice = lattice_class(
         {"lattice": {"dim": dims, "velocities": velocities}, "geometry": []}
     )
@@ -65,12 +61,11 @@ def test_ab_streaming_is_one_shift_per_dimension(lattice_class, dims, velocities
 
     assert len(children) == lattice.num_dims
     assert all(isinstance(child, StreamingShift) for child in children)
-    assert operator.structure() == children
 
 
 @pytest.mark.parametrize("dims,reflection", MS_LATTICES)
 def test_ms_incrementer_is_one_shift_per_dimension(dims, reflection):
-    """The incrementer's children are the per-dimension shifts, and so are its parts."""
+    """The incrementer's children are the per-dimension shifts."""
     geometry = (
         [{"shape": "cuboid", "x": [1, 2], "y": [1, 2], "boundary": reflection}]
         if reflection
@@ -88,26 +83,15 @@ def test_ms_incrementer_is_one_shift_per_dimension(dims, reflection):
 
     assert len(children) == lattice.num_dims
     assert all(isinstance(child, StreamingShift) for child in children)
-    assert incrementer.structure() == children
 
 
 def test_specular_reflection_streams_with_one_shift_per_dimension():
-    """The dimension-selective stream is a sequence of per-dimension shifts."""
+    """The dimension-selective stream is one shift per dimension and nothing else streams."""
     lattice = specular_lattice()
 
     operator = ABSpecularReflectionOperator(lattice, lattice.shapes["specular"])
 
-    assert len(shifts_under(operator, SequenceBlock)) == lattice.num_dims
     assert len(shifts_under(operator, object)) == lattice.num_dims
-
-
-def test_zone_agnostic_reflection_streams_with_one_shift_per_dimension():
-    """On a specular lattice the dimension-selective stream is a sequence of per-dimension shifts."""
-    lattice = specular_lattice()
-
-    operator = ABZoneAgnosticReflectionOperator(lattice)
-
-    assert len(shifts_under(operator, SequenceBlock)) == lattice.num_dims
 
 
 def test_sr_check_unstreams_and_restreams_with_one_shift_per_dimension():

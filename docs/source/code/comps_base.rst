@@ -46,9 +46,6 @@ with ``ControlledBlock``, ``~``, ``**`` and the qarp engines directly.
 .. autoclass:: qlbm.components.base.ControllableComponent
     :members:
 
-.. autoclass:: qlbm.components.base.SequenceBlock
-    :members:
-
 .. autoclass:: qlbm.components.base.LBMOperator
 
 .. autoclass:: qlbm.components.base.LBMAlgorithm

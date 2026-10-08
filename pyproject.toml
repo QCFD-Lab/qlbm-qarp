@@ -25,7 +25,7 @@ classifiers = [
 dependencies = [
     "numpy>=2.2",
     "numpy-stl>=3.1",
-    "openqarp>=0.1.1",
+    "openqarp>=0.2,<0.3",
     "typing-extensions",
     "vtk",
 ]

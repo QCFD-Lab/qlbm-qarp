@@ -20,7 +20,6 @@ from .base import (
     LBMComposite,
     LBMOperator,
     LBMPrimitive,
-    SequenceBlock,
 )
 from .common import (
     EmptyPrimitive,
@@ -64,7 +63,6 @@ __all__ = [
     "LatticePrimitive",
     "LBMComposite",
     "ControllableComponent",
-    "SequenceBlock",
     "GenericLQLGACollisionOperator",
     "LBMOperator",
     "LBMAlgorithm",

@@ -2,7 +2,6 @@
 
 from typing import List
 
-from qarp.blocks import AnyBlock
 from typing_extensions import override
 
 from qlbm.components.base import LatticePrimitive, LBMOperator
@@ -160,17 +159,6 @@ class ControlledIncrementer(LBMOperator):
                 ),
                 control_qubits + grid_index,
             )
-
-    def structure(self) -> List[AnyBlock]:
-        """
-        The per-dimension shifts in order, declared for qarp's structured execution.
-
-        Returns
-        -------
-        List[AnyBlock]
-            The children of this primitive.
-        """
-        return list(self.children())
 
     @override
     def __str__(self) -> str:

@@ -3,16 +3,13 @@
 Every component is a qarp block: leaves (:class:`LBMPrimitive`) emit gates,
 trees (:class:`LBMComposite`) place child blocks.  Components build on
 construction, so subclasses set every attribute ``build_vanilla`` reads
-before calling ``super().__init__``.  A :class:`SequenceBlock` is a plain
-qarp composite over a list of blocks, built by its parent, whose parts are
-declared to structured execution.
+before calling ``super().__init__``.
 """
 
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 from qarp.blocks import (
     AnyBlock,
-    CompositeBlock,
     CompositeBlockBase,
     ControlledBlock,
     SimpleBlock,
@@ -128,28 +125,6 @@ def flip_if(
         targets,
         ctrl_state=[qubit not in inverted for qubit in controls],
     )
-
-
-class SequenceBlock(CompositeBlock):
-    """
-    A composite whose children are its declared parts.
-
-    qarp's structured execution plans a block part by part when it declares
-    them, instead of deriving the block's span as a whole first.  Use it for
-    a sequence whose every child plans well on its own (declared permutations,
-    small classical blocks); a sequence of loose gates plans better as a span.
-    """
-
-    def structure(self) -> List[AnyBlock]:
-        """
-        The children in placement order, declared for qarp's structured execution.
-
-        Returns
-        -------
-        List[AnyBlock]
-            The blocks this sequence was given, built.
-        """
-        return [block.build() for block in self.blocks]
 
 
 class LBMPrimitive(SimpleBlock):

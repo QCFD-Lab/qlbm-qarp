@@ -73,7 +73,7 @@ class SimulationConfig:
         * - Attribute
           - Description
         * - :attr:`optimization_level`
-          - The optimization level handed to ``Block.optimize``; 0 (the default) leaves the command stream untouched.
+          - The optimization level qarp applies at execution to the gate runs left after planning a block's structure; 0 (the default) runs them as they are, 1 cancels and fuses adjacent gates, 2 also cancels across commuting gates.
         * - :attr:`shots`
           - The default number of shots per time step. ``qarp.EXACT`` returns exact probabilities instead of sampled counts.
 

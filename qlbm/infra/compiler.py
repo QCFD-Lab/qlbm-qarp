@@ -1,7 +1,6 @@
 """Optimization pass that lowers ``qlbm`` components into runnable qarp blocks."""
 
 from logging import Logger, getLogger
-from time import perf_counter_ns
 from typing import List
 
 import qarpx as qx
@@ -69,13 +68,15 @@ class CircuitCompiler:
         block : qx.Block
             The block to compile; a component is a block.
         optimization_level : int, optional
-            The optimization level, by default 0. Level 0 leaves the command
-            stream untouched; levels 1 and 2 delegate to ``Block.optimize``.
+            The optimization level, by default 0. It is checked here and
+            applied at execution, where qarp plans the block's structure
+            first and optimizes the remaining gate runs at that level; the
+            block itself is never flattened.
 
         Returns
         -------
         qx.Block
-            The built (and, above level 0, optimized) block.
+            The built block.
 
         Raises
         ------
@@ -90,22 +91,10 @@ class CircuitCompiler:
         block.build()
 
         self.logger.info(
-            f"{str(self)}: Compiling block with properties {get_circuit_properties(block)} with opt={optimization_level}"
+            f"{str(self)}: Compiled block with properties {get_circuit_properties(block)} for opt={optimization_level}"
         )
 
-        if optimization_level == 0:
-            return block
-
-        compiler_start_time = perf_counter_ns()
-        compiled_block = block.optimize(level=optimization_level)
-        self.logger.info(
-            f"Compilation took {perf_counter_ns() - compiler_start_time} (ns)"
-        )
-        self.logger.info(
-            f"Compiled block has properties {get_circuit_properties(compiled_block)}"
-        )
-
-        return compiled_block
+        return block
 
     def __str__(self) -> str:
         """

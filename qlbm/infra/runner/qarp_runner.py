@@ -165,7 +165,12 @@ class QarpRunner(CircuitRunner):
             return state
         evolution = self.config.algorithm**steps  # type: ignore[operator]
         evolution.build()
-        return np.asarray(evolution.statevector(initial_state=state))
+        return np.asarray(
+            evolution.statevector(
+                initial_state=state,
+                optimization_level=self.config.optimization_level,
+            )
+        )
 
     def _run_snapshot_time_loop(
         self,
@@ -256,7 +261,10 @@ class QarpRunner(CircuitRunner):
             measured_qubits=[qubit for qubit, _ in self.measure_pairs],
             initial_state=self._normalised(statevector),
         )
-        engine = QarpEngine(seed=self._step_seed(step))
+        engine = QarpEngine(
+            seed=self._step_seed(step),
+            optimization_level=self.config.optimization_level,
+        )
         engine.build([sampler])
         distribution = engine.run()[0]
 

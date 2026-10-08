@@ -16,7 +16,7 @@ from qlbm.components.ab.streaming import (
     ABStreamingOperator,
     velocity_qubits_to_invert,
 )
-from qlbm.components.base import LBMOperator, SequenceBlock, flip_if, on
+from qlbm.components.base import LBMOperator, flip_if, on
 from qlbm.components.common.adders import StreamingShift, shift_on
 from qlbm.components.ms.specular_reflection import SpecularWallComparator
 from qlbm.lattice.geometry.encodings.ms import ReflectionPoint, ReflectionWall
@@ -366,7 +366,7 @@ class ABBounceBackReflectionOperator(LBMOperator):
         AnyBlock
             The block over the full lattice width.
         """
-        return SequenceBlock(
+        return CompositeBlock(
             [
                 on(
                     ABBounceBackReflectionPermutation(
@@ -556,7 +556,7 @@ class ABSpecularReflectionOperator(LBMOperator):
                     controls + grid_index,
                 )
             )
-        return SequenceBlock(children, self.n_qubits, name="ab_sr_stream")
+        return CompositeBlock(children, self.n_qubits, name="ab_sr_stream")
 
     def _reset_outside_wall_ancilla_per_dim(self, block: Block, dim: int) -> AnyBlock:
         children = []

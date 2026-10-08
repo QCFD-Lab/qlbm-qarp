@@ -2,7 +2,6 @@
 
 from typing import List, Sequence, Tuple
 
-from qarp.blocks import AnyBlock
 from typing_extensions import override
 
 from qlbm.components.ab.encodings import ABEncodingType
@@ -94,17 +93,12 @@ class ABStreamingOperator(LBMOperator):
     This makes the operator useful for the application of boundary conditions.
     Controls need only be applied to the phase gates and not the QFT blocks."""
 
-    inverse: bool
-    """Whether to stream every population backwards, undoing the forward operator."""
-
     def __init__(
         self,
         lattice: AmplitudeLattice,
         additional_control_qubit_indices: List[int] = [],
-        inverse: bool = False,
     ) -> None:
         self.additional_control_qubit_indices = additional_control_qubit_indices
-        self.inverse = inverse
         super().__init__(lattice)
 
     @override
@@ -147,7 +141,7 @@ class ABStreamingOperator(LBMOperator):
             controls = extra + velocity
         shifts = []
         for direction, indices in enumerate(populations):
-            positive = (direction == 0) != self.inverse
+            positive = direction == 0
             for index in indices:
                 if encoding == ABEncodingType.OH:
                     shifts.append(
@@ -163,17 +157,6 @@ class ABStreamingOperator(LBMOperator):
                         )
                     )
         return controls, shifts
-
-    def structure(self) -> List[AnyBlock]:
-        """
-        The per-dimension shifts in order, declared for qarp's structured execution.
-
-        Returns
-        -------
-        List[AnyBlock]
-            The children of this operator.
-        """
-        return list(self.children())
 
     @override
     def __str__(self) -> str:
