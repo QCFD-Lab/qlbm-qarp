@@ -1,147 +1,162 @@
 """Prepares the initial state for the :class:`.SpaceTimeQLBM` for a volumetric region."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
 from typing import List, Tuple, cast
 
-from qiskit import QuantumCircuit
-from qiskit.circuit.library import MCMTGate, XGate
+from qarp.blocks import HnBlock
 from typing_extensions import override
 
-from qlbm.components.base import LBMPrimitive
+from qlbm.components.base import LBMOperator, flip_if
 from qlbm.components.common.comparators import SingleRegisterComparator
 from qlbm.lattice.lattices.spacetime_lattice import SpaceTimeLattice
+from qlbm.lattice.spacetime.properties_base import VonNeumannNeighbor
 from qlbm.tools.utils import ComparatorMode, flatten
 
 
-class VolumetricSpaceTimeInitialConditions(LBMPrimitive):
+def stencil_neighbors(lattice: SpaceTimeLattice, manhattan_distance: int) -> List:
+    """
+    The stencil positions at ``manhattan_distance`` from the origin (the origin itself at 0).
+
+    Parameters
+    ----------
+    lattice : SpaceTimeLattice
+        The lattice whose stencil is walked.
+    manhattan_distance : int
+        The layer of the stencil.
+
+    Returns
+    -------
+    List
+        The :class:`.VonNeumannNeighbor` objects of the layer.
+    """
+    if manhattan_distance == 0:
+        return [lattice.properties.origin]
+    return lattice.extreme_point_indices[manhattan_distance] + (
+        flatten(list(lattice.intermediate_point_indices[manhattan_distance].values()))
+        if manhattan_distance in lattice.intermediate_point_indices
+        else []
+    )
+
+
+def volume_bounds_at(
+    lattice: SpaceTimeLattice,
+    cuboid_bounds: List[Tuple[int, int]],
+    neighbor: VonNeumannNeighbor,
+) -> List[Tuple[Tuple[int, int], Tuple[bool, bool]]]:
+    """
+    The periodic comparator bounds of ``cuboid_bounds`` shifted to the stencil position ``neighbor``.
+
+    Parameters
+    ----------
+    lattice : SpaceTimeLattice
+        The lattice providing the periodic wrap-around.
+    cuboid_bounds : List[Tuple[int, int]]
+        The cuboid bounds per dimension.
+    neighbor : VonNeumannNeighbor
+        The stencil position whose relative coordinates offset the bounds.
+
+    Returns
+    -------
+    List[Tuple[Tuple[int, int], Tuple[bool, bool]]]
+        Per dimension, the shifted bounds and whether each wraps around.
+    """
+    return lattice.comparator_periodic_volume_bounds(
+        cast(
+            List[Tuple[int, int]],
+            [
+                tuple(
+                    dim_bound[i] + neighbor.coordinates_relative[dim]
+                    for i in range(len(dim_bound))
+                )
+                for dim, dim_bound in enumerate(cuboid_bounds)
+            ],
+        )
+    )
+
+
+def volume_comparators(
+    lattice: SpaceTimeLattice,
+    periodic_volume_bounds: List[Tuple[Tuple[int, int], Tuple[bool, bool]]],
+) -> List[Tuple[SingleRegisterComparator, List[int]]]:
+    """
+    The lower- and upper-bound comparators of a volume, each with the qubits it is placed on.
+
+    Parameters
+    ----------
+    lattice : SpaceTimeLattice
+        The lattice whose grid and comparator ancillae are addressed.
+    periodic_volume_bounds : List[Tuple[Tuple[int, int], Tuple[bool, bool]]]
+        The bounds per dimension, as :func:`volume_bounds_at` returns them.
+
+    Returns
+    -------
+    List[Tuple[SingleRegisterComparator, List[int]]]
+        The comparators in placement order, with their qubits.
+    """
+    return [
+        (
+            SingleRegisterComparator(
+                lattice.properties.get_num_grid_qubits() + 1,
+                pvb[0][bound],
+                ComparatorMode.LE if bound else ComparatorMode.GE,
+            ),
+            lattice.grid_index() + [lattice.ancilla_comparator_index(dim)[bound]],
+        )
+        for dim, pvb in enumerate(periodic_volume_bounds)
+        for bound in [False, True]
+    ]
+
+
+class VolumetricSpaceTimeInitialConditions(LBMOperator):
     """
     Prepares the initial state for the :class:`.SpaceTimeQLBM` for a volumetric region.
 
     Work in progress.
     """
 
+    lattice: SpaceTimeLattice
+
     def __init__(
         self,
         lattice: SpaceTimeLattice,
         cuboid_bounds: List[Tuple[int, int]],
         velocity_profile: Tuple[int, ...],
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(logger)
-
-        self.lattice = lattice
+    ) -> None:
         self.cuboid_bounds = cuboid_bounds
         self.velocity_profile = velocity_profile
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = self.lattice.circuit.copy()
-        circuit.h(self.lattice.grid_index())
+    def build_vanilla(self) -> None:
+        grid_index = self.lattice.grid_index()
+        self.place(HnBlock(len(grid_index)), grid_index)
 
         for manhattan_distance in range(self.lattice.num_timesteps + 1):
-            for neighbor in (
-                self.lattice.extreme_point_indices[manhattan_distance]
-                + (
-                    flatten(
-                        list(
-                            self.lattice.intermediate_point_indices[
-                                manhattan_distance
-                            ].values()
-                        )
-                    )
-                    if manhattan_distance in self.lattice.intermediate_point_indices
-                    else []
+            for neighbor in stencil_neighbors(self.lattice, manhattan_distance):
+                periodic_volume_bounds = volume_bounds_at(
+                    self.lattice, self.cuboid_bounds, neighbor
                 )
-                if manhattan_distance > 0
-                else [self.lattice.properties.origin]
-            ):
-                periodic_volume_bounds: List[
-                    Tuple[Tuple[int, int], Tuple[bool, bool]]
-                ] = self.lattice.comparator_periodic_volume_bounds(
-                    cast(
-                        List[Tuple[int, int]],
-                        [
-                            tuple(
-                                dim_bound[i]
-                                + neighbor.coordinates_relative[
-                                    dim
-                                ]  # Add the offset to the bound in each dimension
-                                for i in range(len(dim_bound))
-                            )
-                            for dim, dim_bound in enumerate(self.cuboid_bounds)
-                        ],
-                    )
-                )
-
-                comparators = [
+                comparators = volume_comparators(self.lattice, periodic_volume_bounds)
+                # The sum of the profile is the number of velocities set to true.
+                target_qubits = flatten(
                     [
-                        SingleRegisterComparator(
-                            self.lattice.properties.get_num_grid_qubits() + 1,
-                            pvb[0][bound],
-                            self.__adjusted_comparator_mode(bound),
-                            logger=self.logger,
-                        )
-                        for bound in [False, True]
+                        self.lattice.velocity_index(neighbor.neighbor_index, c)
+                        for c, is_velocity_enabled in enumerate(self.velocity_profile)
+                        if is_velocity_enabled
                     ]
-                    for pvb in periodic_volume_bounds
-                ]
+                )
 
-                for dim in range(self.lattice.num_dims):
-                    for bound in [False, True]:
-                        circuit.compose(
-                            comparators[dim][bound].circuit,
-                            qubits=self.lattice.grid_index()
-                            + [self.lattice.ancilla_comparator_index(dim)[bound]],
-                            inplace=True,
-                        )
-
+                # The comparators compute the volume membership on their
+                # ancillae and uncompute it after the velocities are set.
+                for comparator, qubits in comparators:
+                    self.place(comparator, qubits)
                 for (
                     control_qubit_sequence
                 ) in self.lattice.volumetric_ancilla_qubit_combinations(
                     [any(pvb[1]) for pvb in periodic_volume_bounds]
                 ):
-                    circuit.compose(
-                        MCMTGate(
-                            XGate(),
-                            num_ctrl_qubits=len(control_qubit_sequence),
-                            num_target_qubits=sum(
-                                self.velocity_profile
-                            ),  # The sum is equal to the number of velocities set to true
-                        ),
-                        qubits=control_qubit_sequence
-                        + flatten(
-                            [
-                                self.lattice.velocity_index(neighbor.neighbor_index, c)
-                                for c, is_velocity_enabled in enumerate(
-                                    self.velocity_profile
-                                )
-                                if is_velocity_enabled
-                            ]
-                        ),
-                        inplace=True,
-                    )
-
-                for dim in range(self.lattice.num_dims):
-                    for bound in [False, True]:
-                        circuit.compose(
-                            comparators[dim][bound].circuit,
-                            qubits=self.lattice.grid_index()
-                            + [self.lattice.ancilla_comparator_index(dim)[bound]],
-                            inplace=True,
-                        )
-
-        return circuit
-
-    def __adjusted_comparator_mode(self, bound: bool) -> ComparatorMode:
-        return ComparatorMode.LE if (bound) else ComparatorMode.GE
+                    self.place(flip_if(control_qubit_sequence, target_qubits))
+                for comparator, qubits in comparators:
+                    self.place(comparator, qubits)
 
     @override
     def __str__(self) -> str:

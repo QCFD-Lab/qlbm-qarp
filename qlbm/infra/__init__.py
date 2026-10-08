@@ -1,20 +1,20 @@
 """Utilities that integrate qlbm circuits with external infrastructure.
 
-Includes qiskit and tket integrations for transpiling,
-qiskit and qulacs integrations for running,
-and ParaView integration for visualization.
+Includes the qarp block compiler, the qarp simulator runner, and the
+ParaView integration for visualization.
 """
 
 from .compiler import CircuitCompiler
-from .result import AmplitudeResult, SpaceTimeResult
-from .runner import CircuitRunner, QiskitRunner, SimulationConfig
+from .result import AmplitudeResult, LQLGAResult, QBMResult, SpaceTimeResult
+from .runner import CircuitRunner, QarpRunner, SimulationConfig
 
 __all__ = [
     "CircuitCompiler",
     "CircuitRunner",
-    # "MPIQulacsRunner",
     "AmplitudeResult",
+    "LQLGAResult",
+    "QBMResult",
     "SpaceTimeResult",
-    "QiskitRunner",
+    "QarpRunner",
     "SimulationConfig",
 ]

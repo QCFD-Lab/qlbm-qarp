@@ -7,7 +7,6 @@ from typing import Dict
 
 import numpy as np
 import vtk
-from qiskit.quantum_info import Statevector
 from vtkmodules.util import numpy_support
 
 from qlbm.lattice import Lattice
@@ -144,24 +143,32 @@ class QBMResult(ABC):
     @abstractmethod
     def save_timestep_counts(
         self,
-        counts: Dict[str, float],
+        counts: Dict[int, float],
         timestep: int,
         create_vis: bool = True,
         save_array: bool = False,
+        n_cbits: int | None = None,
     ):
         """
         Saves the time step counts to a file.
 
         Parameters
         ----------
-        counts: Dict[str, float]
-            The result in Qiskit ``Counts`` format.
+        counts: Dict[int, float]
+            The measurement outcomes, keyed by LSB classical-bit integer
+            (bit ``c`` of the key is the outcome of classical bit ``c``).
         timestep : int
-            The time step to which the result corresponds.k
+            The time step to which the result corresponds.
         create_vis : bool, optional
             Whether to create the visualization, by default True.
         save_array : bool, optional
             Whether to save the raw counts object to a CSV file, by default False.
+        n_cbits : int | None, optional
+            The width of the classical register the counts were sampled into,
+            by default None. Decoders that need it fall back to the width
+            implied by the lattice. Never derive this from the number of
+            qubits: measurement circuits leave ancilla, marker, and
+            accumulation qubits unmeasured.
         """
         pass
 
@@ -170,7 +177,7 @@ class QBMResult(ABC):
         """Converts all numpy data saved to disk to ``vti`` files."""
         pass
 
-    def save_statevector(self, statevector: Statevector, step: int):
+    def save_statevector(self, statevector: np.ndarray, step: int):
         """
         Save a given statevector to disk.
 
@@ -178,15 +185,15 @@ class QBMResult(ABC):
 
         Parameters
         ----------
-        statevector : Statevector
-            The statevector to save.
+        statevector : np.ndarray
+            The LSB-indexed statevector to save.
         step : int
             The step this statevector corresponds to, for naming purposes.
         """
         statevector_dir = f"{self.directory}/statevectors"
         if not isdir(statevector_dir):
             create_directory_and_parents(statevector_dir)
-        state = np.asarray(statevector, dtype=np.complex128)  # shape (2**n,)
+        state = np.asarray(statevector, dtype=np.complex128)
 
         out_path = Path(f"{statevector_dir}/step_{step}.npy")
         np.save(out_path, state)

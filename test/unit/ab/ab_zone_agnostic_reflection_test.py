@@ -2,9 +2,6 @@
 
 import numpy as np
 import pytest
-from qiskit import QuantumCircuit, transpile
-from qiskit.quantum_info import Statevector
-from qiskit_aer import AerSimulator
 
 from qlbm.components.ab.reflection.agnosotic_reflection import (
     ABZoneAgnosticReflectionOperator,
@@ -13,20 +10,16 @@ from qlbm.components.ab.reflection.agnosotic_reflection import (
 from qlbm.lattice import ABLattice
 from qlbm.tools.exceptions import CircuitException
 
+from .qarp_helpers import (
+    lattice_builder,
+    marginal_probabilities,
+    simulate_statevector,
+    statevectors_equivalent,
+)
+
 # =============================================================================
 # Helper utilities
 # =============================================================================
-
-_SIMULATOR = AerSimulator(method="statevector")
-
-
-def _simulate_statevector(circuit: QuantumCircuit) -> Statevector:
-    """Run a circuit on AerSimulator and return the final statevector."""
-    qc = circuit.copy()
-    qc.save_statevector()
-    tqc = transpile(qc, _SIMULATOR, optimization_level=0)
-    result = _SIMULATOR.run(tqc).result()
-    return result.data(0)["statevector"]
 
 
 def _make_single_geometry_lattice(dim_x=4, dim_y=4) -> ABLattice:
@@ -84,7 +77,7 @@ def _encode_basis_state(lattice: ABLattice, x: int, y: int, v: int, marker: int 
     The grid and velocity are encoded in the standard binary representation.
     Ancillae are initialized to 0. Marker is set via X gates.
     """
-    circuit = lattice.circuit.copy()
+    circuit = lattice_builder(lattice)
 
     for i, q in enumerate(lattice.grid_index(0)):
         if (x >> i) & 1:
@@ -106,7 +99,7 @@ def _encode_basis_state(lattice: ABLattice, x: int, y: int, v: int, marker: int 
     return circuit
 
 
-def _get_obstacle_ancilla_value(lattice: ABLattice, sv: Statevector) -> dict:
+def _get_obstacle_ancilla_value(lattice: ABLattice, sv: np.ndarray) -> dict:
     """Extract the obstacle ancilla probabilities from a statevector.
 
     Returns a dict mapping obstacle ancilla value (0 or 1) to probability.
@@ -115,7 +108,7 @@ def _get_obstacle_ancilla_value(lattice: ABLattice, sv: Statevector) -> dict:
     probs = {}
     for val in [0, 1]:
         prob = 0.0
-        for i, amp in enumerate(sv.data):
+        for i, amp in enumerate(sv):
             obstacle_val = (i >> obstacle_idx[0]) & 1
             if obstacle_val == val:
                 prob += abs(amp) ** 2
@@ -139,8 +132,8 @@ class TestOracleSingleGeometry:
 
         # Position (1, 1) is inside the block [1,2] x [1,2]
         prep = _encode_basis_state(lattice, x=1, y=1, v=0)
-        prep.compose(oracle.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(oracle)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[1] == pytest.approx(1.0, abs=1e-10)
@@ -153,8 +146,8 @@ class TestOracleSingleGeometry:
 
         # Position (0, 0) is outside the block [1,2] x [1,2]
         prep = _encode_basis_state(lattice, x=0, y=0, v=0)
-        prep.compose(oracle.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(oracle)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[0] == pytest.approx(1.0, abs=1e-10)
@@ -167,8 +160,8 @@ class TestOracleSingleGeometry:
 
         # Position (2, 2) is the upper corner of the block [1,2] x [1,2]
         prep = _encode_basis_state(lattice, x=2, y=2, v=0)
-        prep.compose(oracle.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(oracle)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[1] == pytest.approx(1.0, abs=1e-10)
@@ -180,9 +173,9 @@ class TestOracleSingleGeometry:
         oracle = ABZoneAgnosticReflectionOracle(lattice, shape)
 
         prep = _encode_basis_state(lattice, x=1, y=1, v=0)
-        prep.compose(oracle.circuit, inplace=True)
-        prep.compose(oracle.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(oracle)
+        prep.compose(oracle)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[0] == pytest.approx(1.0, abs=1e-10)
@@ -207,8 +200,8 @@ class TestOracleWithMarkerControl:
         # Position (1, 1) is inside the block.
         # Marker = 1 (all ones for 1-qubit marker) -> should mark
         prep = _encode_basis_state(lattice, x=1, y=1, v=0, marker=1)
-        prep.compose(oracle.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(oracle)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[1] == pytest.approx(1.0, abs=1e-10)
@@ -224,8 +217,8 @@ class TestOracleWithMarkerControl:
         # Position (1, 1) is inside the block.
         # Marker = 0 (not all ones) -> should NOT mark
         prep = _encode_basis_state(lattice, x=1, y=1, v=0, marker=0)
-        prep.compose(oracle.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(oracle)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[0] == pytest.approx(1.0, abs=1e-10)
@@ -244,15 +237,15 @@ class TestOracleWithMarkerControl:
 
         for marker_val in [0, 1]:
             prep = _encode_basis_state(lattice, x=1, y=1, v=3, marker=marker_val)
-            original_sv = _simulate_statevector(prep)
+            original_sv = simulate_statevector(prep)
 
-            prep.compose(oracle.circuit, inplace=True)
-            after_sv = _simulate_statevector(prep)
+            prep.compose(oracle)
+            after_sv = simulate_statevector(prep)
 
             # Check that grid qubits are preserved by comparing marginal probabilities
             grid_qubits = lattice.grid_index()
-            original_grid_probs = original_sv.probabilities(grid_qubits)
-            after_grid_probs = after_sv.probabilities(grid_qubits)
+            original_grid_probs = marginal_probabilities(original_sv, grid_qubits)
+            after_grid_probs = marginal_probabilities(after_sv, grid_qubits)
             np.testing.assert_allclose(
                 original_grid_probs, after_grid_probs, atol=1e-10
             )
@@ -411,8 +404,8 @@ class TestOperatorSingleGeometry:
 
         # Test with a position outside the obstacle
         prep = _encode_basis_state(lattice, x=0, y=0, v=0)
-        prep.compose(operator.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(operator)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[0] == pytest.approx(1.0, abs=1e-10)
@@ -473,11 +466,13 @@ class TestBackwardCompatibility:
         for x, y in [(0, 0), (1, 1), (2, 2), (3, 0)]:
             for v in [0, 3, 5]:
                 prep_a = _encode_basis_state(lattice, x=x, y=y, v=v)
-                prep_a.compose(op_explicit.circuit, inplace=True)
-                sv_a = _simulate_statevector(prep_a)
+                prep_a.compose(op_explicit)
+                sv_a = simulate_statevector(prep_a)
 
                 prep_b = _encode_basis_state(lattice, x=x, y=y, v=v)
-                prep_b.compose(op_inferred.circuit, inplace=True)
-                sv_b = _simulate_statevector(prep_b)
+                prep_b.compose(op_inferred)
+                sv_b = simulate_statevector(prep_b)
 
-                assert sv_a.equiv(sv_b), f"Mismatch at x={x}, y={y}, v={v}"
+                assert statevectors_equivalent(sv_a, sv_b), (
+                    f"Mismatch at x={x}, y={y}, v={v}"
+                )

@@ -20,6 +20,7 @@ from qlbm.components.ms import MSQLBM
 from qlbm.lattice import MSLattice
 
 from .utils import (
+    as_circuit,
     decode_state,
     get_nonzero_amplitudes,
     make_ms_qubit_layout,
@@ -57,7 +58,7 @@ class TestMSFreeStreaming:
         """
         alg = MSQLBM(lattice)
         circuit = prepare_ms_particle(lattice, (0, 0), (0, 0), (1, 1))
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -75,7 +76,7 @@ class TestMSFreeStreaming:
         """Magnitude 0 with negative direction: (1,1) -> (0,0) after 1 step."""
         alg = MSQLBM(lattice)
         circuit = prepare_ms_particle(lattice, (1, 1), (0, 0), (0, 0))
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -93,7 +94,7 @@ class TestMSFreeStreaming:
         """Magnitude 0 with negative direction from (0,0) wraps to (3,3)."""
         alg = MSQLBM(lattice)
         circuit = prepare_ms_particle(lattice, (0, 0), (0, 0), (0, 0))
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -112,7 +113,7 @@ class TestMSFreeStreaming:
         """
         alg = MSQLBM(lattice)
         circuit = prepare_ms_particle(lattice, (0, 0), (1, 0), (1, 1))
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -132,7 +133,7 @@ class TestMSFreeStreaming:
         """
         alg = MSQLBM(lattice)
         circuit = prepare_ms_particle(lattice, (1, 0), (0, 0), (1, 0))
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -147,8 +148,8 @@ class TestMSFreeStreaming:
         """Two steps with magnitude 0, positive direction: (0,0) -> (2,2)."""
         alg = MSQLBM(lattice)
         circuit = prepare_ms_particle(lattice, (0, 0), (0, 0), (1, 1))
-        circuit.compose(alg.circuit, inplace=True)
-        circuit.compose(alg.circuit.copy(), inplace=True)
+        circuit.compose(alg)
+        circuit.compose(as_circuit(alg))
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -202,7 +203,7 @@ class TestMSBounceback:
         """
         alg = MSQLBM(lattice)
         circuit = prepare_ms_particle(lattice, (1, 0), (0, 0), (1, 1))
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -222,7 +223,7 @@ class TestMSBounceback:
         """
         alg = MSQLBM(lattice)
         circuit = prepare_ms_particle(lattice, (1, 1), (0, 0), (0, 1))
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)

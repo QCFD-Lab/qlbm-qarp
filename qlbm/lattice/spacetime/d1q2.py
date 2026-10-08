@@ -3,9 +3,9 @@
 from logging import Logger, getLogger
 from typing import Dict, List, Tuple, cast
 
-from qiskit import QuantumRegister
 from typing_extensions import override
 
+from qlbm.lattice.registers import Register
 from qlbm.lattice.spacetime.properties_base import (
     LatticeDiscretization,
     SpaceTimeLatticeBuilder,
@@ -88,15 +88,13 @@ class D1Q2SpaceTimeLatticeBuilder(SpaceTimeLatticeBuilder):
         return 0
 
     @override
-    def get_registers(self) -> Tuple[List[QuantumRegister], ...]:
+    def get_registers(self) -> Tuple[List[Register], ...]:
         # Grid qubits
-        grid_registers = [
-            QuantumRegister(self.num_gridpoints[0].bit_length(), name="g_x")
-        ]
+        grid_registers = [Register(self.num_gridpoints[0].bit_length(), name="g_x")]
 
         # Velocity qubits
         velocity_registers = [
-            QuantumRegister(
+            Register(
                 self.get_num_velocity_qubits(
                     self.num_timesteps,
                 ),  # The number of velocity qubits required at time t
@@ -105,13 +103,11 @@ class D1Q2SpaceTimeLatticeBuilder(SpaceTimeLatticeBuilder):
         ]
 
         ancilla_measurement_register = (
-            [QuantumRegister(1, "a_m")] if self.include_measurement_qubit else []
+            [Register(1, "a_m")] if self.include_measurement_qubit else []
         )
 
         ancilla_comparator_registers = (
-            [QuantumRegister(1, "a_l"), QuantumRegister(1, "a_u")]
-            if self.use_volumetric_ops
-            else []
+            [Register(1, "a_l"), Register(1, "a_u")] if self.use_volumetric_ops else []
         )
 
         # Ancilla qubits

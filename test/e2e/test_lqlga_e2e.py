@@ -23,7 +23,7 @@ from qlbm.components.lqlga import LQLGA
 from qlbm.components.lqlga.initial import LQGLAInitialConditions
 from qlbm.lattice import LQLGALattice
 
-from .utils import run_statevector
+from .utils import as_circuit, run_statevector
 
 
 def _decode_lqlga_state(sv, num_gridpoints: int, num_velocities: int):
@@ -66,8 +66,8 @@ class TestLQLGAFreeStreaming:
         alg = LQLGA(lattice)
         ic = LQGLAInitialConditions(lattice, grid_data=[((1,), (True, False))])
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _decode_lqlga_state(sv, 4, 2)
@@ -78,8 +78,8 @@ class TestLQLGAFreeStreaming:
         alg = LQLGA(lattice)
         ic = LQGLAInitialConditions(lattice, grid_data=[((1,), (False, True))])
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _decode_lqlga_state(sv, 4, 2)
@@ -90,8 +90,8 @@ class TestLQLGAFreeStreaming:
         alg = LQLGA(lattice)
         ic = LQGLAInitialConditions(lattice, grid_data=[((0,), (False, True))])
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _decode_lqlga_state(sv, 4, 2)
@@ -102,8 +102,8 @@ class TestLQLGAFreeStreaming:
         alg = LQLGA(lattice)
         ic = LQGLAInitialConditions(lattice, grid_data=[((1,), (True, True))])
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _decode_lqlga_state(sv, 4, 2)
@@ -114,9 +114,9 @@ class TestLQLGAFreeStreaming:
         alg = LQLGA(lattice)
         ic = LQGLAInitialConditions(lattice, grid_data=[((1,), (True, False))])
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
-        circuit.compose(alg.circuit.copy(), inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
+        circuit.compose(as_circuit(alg))
         sv = run_statevector(circuit)
 
         result = _decode_lqlga_state(sv, 4, 2)
@@ -147,8 +147,8 @@ class TestLQLGABounceback:
         alg = LQLGA(lattice)
         ic = LQGLAInitialConditions(lattice, grid_data=[((2,), (True, False))])
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _decode_lqlga_state(sv, 4, 2)
@@ -159,8 +159,8 @@ class TestLQLGABounceback:
         alg = LQLGA(lattice)
         ic = LQGLAInitialConditions(lattice, grid_data=[((2,), (False, True))])
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _decode_lqlga_state(sv, 4, 2)
@@ -175,9 +175,9 @@ class TestLQLGABounceback:
         alg = LQLGA(lattice)
         ic = LQGLAInitialConditions(lattice, grid_data=[((2,), (True, False))])
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
-        circuit.compose(alg.circuit.copy(), inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
+        circuit.compose(as_circuit(alg))
         sv = run_statevector(circuit)
 
         result = _decode_lqlga_state(sv, 4, 2)

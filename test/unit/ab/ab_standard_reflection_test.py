@@ -1,9 +1,7 @@
 """Statevector-level tests for the standard ABReflectionOperator."""
 
+import numpy as np
 import pytest
-from qiskit import QuantumCircuit, transpile
-from qiskit.quantum_info import Statevector
-from qiskit_aer import AerSimulator
 
 from qlbm.components.ab.reflection.standard_reflection import (
     ABBounceBackReflectionOperator,
@@ -12,16 +10,10 @@ from qlbm.components.ab.reflection.standard_reflection import (
 from qlbm.lattice import ABLattice
 from qlbm.lattice.geometry.shapes.block import Block
 
-_SIMULATOR = AerSimulator(method="statevector")
-
-
-def _simulate_statevector(circuit: QuantumCircuit) -> Statevector:
-    """Run a circuit on AerSimulator and return the final statevector."""
-    qc = circuit.copy()
-    qc.save_statevector()
-    tqc = transpile(qc, _SIMULATOR, optimization_level=0)
-    result = _SIMULATOR.run(tqc).result()
-    return result.data(0)["statevector"]
+from .qarp_helpers import (
+    lattice_builder,
+    simulate_statevector,
+)
 
 
 def _make_single_geometry_lattice(
@@ -81,7 +73,7 @@ def _encode_basis_state(lattice: ABLattice, x: int, y: int, v: int, marker: int 
     Grid positions and velocity are encoded in binary representation.
     Ancillae are initialized to 0 and the marker is set via X gates.
     """
-    circuit = lattice.circuit.copy()
+    circuit = lattice_builder(lattice)
 
     for i, q in enumerate(lattice.grid_index(0)):
         if (x >> i) & 1:
@@ -103,7 +95,7 @@ def _encode_basis_state(lattice: ABLattice, x: int, y: int, v: int, marker: int 
     return circuit
 
 
-def _get_obstacle_ancilla_value(lattice: ABLattice, sv: Statevector) -> dict:
+def _get_obstacle_ancilla_value(lattice: ABLattice, sv: np.ndarray) -> dict:
     """Extract obstacle ancilla probabilities from a statevector.
 
     Returns a dict mapping obstacle ancilla value (0 or 1) to probability.
@@ -112,7 +104,7 @@ def _get_obstacle_ancilla_value(lattice: ABLattice, sv: Statevector) -> dict:
     probs = {}
     for val in [0, 1]:
         prob = 0.0
-        for i, amp in enumerate(sv.data):
+        for i, amp in enumerate(sv):
             obstacle_val = (i >> obstacle_idx[0]) & 1
             if obstacle_val == val:
                 prob += abs(amp) ** 2
@@ -139,8 +131,8 @@ class TestStandardReflectionSingleGeometryStatevector:
 
         # Position (0, 0) is far from obstacle [2,5]x[2,5]
         prep = _encode_basis_state(lattice, x=0, y=0, v=0)
-        prep.compose(op.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(op)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[0] == pytest.approx(1.0, abs=1e-10)
@@ -158,8 +150,8 @@ class TestStandardReflectionSingleGeometryStatevector:
         # Position (1, 1) is outside the obstacle [2,5]x[2,5]
         # and is an outside corner point
         prep = _encode_basis_state(lattice, x=1, y=1, v=0)
-        prep.compose(op.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(op)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[0] == pytest.approx(1.0, abs=1e-10)
@@ -175,13 +167,13 @@ class TestStandardReflectionSingleGeometryStatevector:
 
         for v in range(9):
             prep = _encode_basis_state(lattice, x=0, y=0, v=v)
-            prep.compose(op.circuit, inplace=True)
-            sv = _simulate_statevector(prep)
+            prep.compose(op)
+            sv = simulate_statevector(prep)
 
             probs = _get_obstacle_ancilla_value(lattice, sv)
-            assert probs[0] == pytest.approx(
-                1.0, abs=1e-10
-            ), f"Obstacle ancilla not clean for v={v} at (0,0)"
+            assert probs[0] == pytest.approx(1.0, abs=1e-10), (
+                f"Obstacle ancilla not clean for v={v} at (0,0)"
+            )
 
 
 # =============================================================================
@@ -211,8 +203,8 @@ class TestSetInsideWallAncillaStatevector:
         wall_circuit = op.set_inside_wall_ancilla_state(block)
 
         prep = _encode_basis_state(lattice, x=3, y=2, v=0)
-        prep.compose(wall_circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(wall_circuit)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[1] == pytest.approx(1.0, abs=1e-10)
@@ -226,8 +218,8 @@ class TestSetInsideWallAncillaStatevector:
         wall_circuit = op.set_inside_wall_ancilla_state(block)
 
         prep = _encode_basis_state(lattice, x=0, y=0, v=0)
-        prep.compose(wall_circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(wall_circuit)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[0] == pytest.approx(1.0, abs=1e-10)
@@ -249,13 +241,13 @@ class TestStandardReflectionMultiGeometry:
         # (7, 7) is outside both obstacle [2,5]x[2,5] and [1,3]x[1,3]
         for marker_val in [0, 1]:
             prep = _encode_basis_state(lattice, x=7, y=7, v=0, marker=marker_val)
-            prep.compose(op.circuit, inplace=True)
-            sv = _simulate_statevector(prep)
+            prep.compose(op)
+            sv = simulate_statevector(prep)
 
             probs = _get_obstacle_ancilla_value(lattice, sv)
-            assert probs[0] == pytest.approx(
-                1.0, abs=1e-10
-            ), f"Failed for marker={marker_val}"
+            assert probs[0] == pytest.approx(1.0, abs=1e-10), (
+                f"Failed for marker={marker_val}"
+            )
 
     def test_multi_geometry_operator_consistent_between_explicit_and_inferred(self):
         """Operator with shapes=None should produce same statevector as explicit shapes.
@@ -269,13 +261,11 @@ class TestStandardReflectionMultiGeometry:
 
         # Verify statevector equivalence at representative points
         for marker_val in [0, 1]:
-            prep_a = _encode_basis_state(
-                lattice, x=7, y=7, v=0, marker=marker_val
-            )
-            prep_a.compose(op_inferred.circuit, inplace=True)
-            sv_a = _simulate_statevector(prep_a)
+            prep_a = _encode_basis_state(lattice, x=7, y=7, v=0, marker=marker_val)
+            prep_a.compose(op_inferred)
+            sv_a = simulate_statevector(prep_a)
 
             probs = _get_obstacle_ancilla_value(lattice, sv_a)
-            assert probs[0] == pytest.approx(
-                1.0, abs=1e-10
-            ), f"Mismatch at (7,7), marker={marker_val}"
+            assert probs[0] == pytest.approx(1.0, abs=1e-10), (
+                f"Mismatch at (7,7), marker={marker_val}"
+            )

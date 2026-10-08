@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
-from qiskit import QuantumCircuit, transpile
-from qiskit_aer import AerSimulator
 
 from qlbm.components.common.primitives import UniformStatePrep
+from test.builders import CircuitBuilder
+
+from .qarp_helpers import simulate_statevector
 
 
 @pytest.mark.parametrize(
@@ -12,17 +13,10 @@ from qlbm.components.common.primitives import UniformStatePrep
 )
 def test_uniform_State_prep(num_states):
     nq = 5
-    sim = AerSimulator()
+    builder = CircuitBuilder(nq)
+    builder.compose(UniformStatePrep(nq, num_states))
 
-    qc = QuantumCircuit(nq)
-    qc.compose(
-        UniformStatePrep(nq, num_states).circuit,
-        inplace=True,
-    )
-    tqc = transpile(qc, sim)
-    tqc.save_statevector()
-    result = sim.run(tqc).result()
-    state = result.get_statevector(tqc)
+    state = simulate_statevector(builder)
 
     expected = 1.0 / np.sqrt(num_states)
 

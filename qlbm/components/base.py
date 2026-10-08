@@ -1,293 +1,300 @@
-"""Base classes for quantum primitives, operators, and algorithms."""
+"""Base classes for the quantum components of QLBMs.
 
-from abc import ABC, abstractmethod
-from io import TextIOBase
-from logging import Logger, getLogger
+Every component is a qarp block: leaves (:class:`LBMPrimitive`) emit gates,
+trees (:class:`LBMComposite`) place child blocks.  Components build on
+construction, so subclasses set every attribute ``build_vanilla`` reads
+before calling ``super().__init__``.
+"""
 
-from qiskit import QuantumCircuit
-from qiskit.qasm2 import dump as dump_qasm2
-from qiskit.qasm3 import dump as dump_qasm3
-from typing_extensions import override
+from typing import Iterable, Optional, Sequence
 
-from qlbm.lattice import Lattice, MSLattice
-from qlbm.lattice.lattices.lqlga_lattice import LQLGALattice
-from qlbm.lattice.lattices.spacetime_lattice import SpaceTimeLattice
+from qarp.blocks import (
+    AnyBlock,
+    CompositeBlockBase,
+    ControlledBlock,
+    SimpleBlock,
+    XnBlock,
+)
+
+from qlbm.lattice import Lattice
 
 
-class QuantumComponent(ABC):
+def on(block: AnyBlock, qubits: Sequence[int]) -> AnyBlock:
     """
-    Base class for all quantum circuits implementing QLBM functionality.
+    Return ``block`` placed on ``qubits`` of the block it is added to.
 
-    This class wraps a :class:`qiskit.QuantumCircuit` object constructed
-    through the parameters supplied to the constructor.
-    The :meth:`create_circuit` is automatically called at construct time
-    and its output is stored in the `circuit` attribute.
-    All quantum components have an implementation of the :meth:`create_circuit` method
-    which builds their specialized quantum circuits.
+    Parameters
+    ----------
+    block : AnyBlock
+        The block to place; it must not be placed anywhere else.
+    qubits : Sequence[int]
+        The parent qubits the block acts on, in the block's order.
 
-    ========================= ======================================================================
-    Attribute                  Summary
-    ========================= ======================================================================
-    :attr:`circuit`           The :class:`.qiskit.QuantumCircuit` of the component.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``
-    ========================= ======================================================================
+    Returns
+    -------
+    AnyBlock
+        The same block, with its ``target_qubits`` set.
     """
-
-    circuit: QuantumCircuit
-    logger: Logger
-
-    def __init__(
-        self,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__()
-        self.logger = logger
-
-    @abstractmethod
-    def create_circuit(self) -> QuantumCircuit:
-        """
-        Creates the :class:`qiskit.QuantumCircuit` of this object.
-
-        This method is called automatically at construction time for all quantum components.
-
-        Returns
-        -------
-        QuantumCircuit
-            The generated QuantumCircuit.
-        """
-        pass
-
-    @override
-    def __repr__(self) -> str:
-        return self.circuit.__repr__()
-
-    @abstractmethod
-    def __str__(self) -> str:
-        """
-        The string representation of a quantum component.
-
-        Returns
-        -------
-        str
-            The string representation of a quantum component.
-        """
-        return self.circuit.__str__()
-
-    def width(self) -> int:
-        """
-        Return the number of qubits plus clbits in the circuit.
-
-        Returns
-        -------
-        int
-            Width of circuit.
-        """
-        return self.circuit.width()
-
-    def size(self) -> int:
-        """
-        Returns the total number of instructions (gates) in the circuit.
-
-        Returns
-        -------
-        int
-            The total number of gates in the circuit.
-        """
-        return self.circuit.size()
-
-    def dump_qasm3(self, stream: TextIOBase) -> None:
-        """
-        Serialize to QASM3.
-
-        Parameters
-        ----------
-        stream : TextIOBase
-            The stream to output to.
-        """
-        return dump_qasm3(self.circuit, stream)
-
-    def dump_qasm2(self, stream: TextIOBase) -> None:
-        """
-        Serialize to QASM2.
-
-        Parameters
-        ----------
-        stream : TextIOBase
-            The stream to output to.
-        """
-        return dump_qasm2(self.circuit, stream)
-
-    def draw(self, output: str, filename: str | None = None):  # type: ignore
-        """
-        Draw the circuit to matplotlib, ASCII, or Latex representations.
-
-        Parameters
-        ----------
-        output : str
-            The format of the output. Use "text", "mpl", or "texsource", respectively.
-        filename : str | None, optional
-            The file to write the output to, by default None.
-        """
-        return self.circuit.draw(output=output, filename=filename)  # type: ignore
+    block.target_qubits = list(qubits)
+    return block
 
 
-class LBMPrimitive(QuantumComponent):
+def x_layer(qubits: Sequence[int]) -> XnBlock:
+    """
+    A layer of :math:`X` gates placed on ``qubits``.
+
+    Parameters
+    ----------
+    qubits : Sequence[int]
+        The parent qubits to invert; must be non-empty.
+
+    Returns
+    -------
+    XnBlock
+        The placed layer.
+    """
+    return XnBlock(len(qubits), target_qubits=list(qubits))
+
+
+def controlled(
+    inner: AnyBlock,
+    controls: Sequence[int],
+    targets: Sequence[int],
+    ctrl_state: Optional[Sequence[bool]] = None,
+) -> AnyBlock:
+    """
+    ``inner`` controlled on ``controls`` and placed on ``targets``.
+
+    With no controls the bare ``inner`` is placed, so callers need no
+    special case for an unconditional operation.
+
+    Parameters
+    ----------
+    inner : AnyBlock
+        The block to control.
+    controls : Sequence[int]
+        The parent's control qubits.
+    targets : Sequence[int]
+        The parent qubits ``inner`` acts on, in its order.
+    ctrl_state : Sequence[bool] | None
+        The control values that activate ``inner``; all ``True`` if ``None``.
+
+    Returns
+    -------
+    AnyBlock
+        The placed block.
+    """
+    if not controls:
+        return on(inner, targets)
+    return ControlledBlock(
+        inner,
+        num_controls=len(controls),
+        ctrl_state=None if ctrl_state is None else list(ctrl_state),
+        target_qubits=list(controls) + list(targets),
+    )
+
+
+def flip_if(
+    controls: Sequence[int], targets: Sequence[int], inverted: Iterable[int] = ()
+) -> AnyBlock:
+    r"""
+    Flip ``targets`` when every control holds its active value.
+
+    The active value is :math:`\ket{1}`, or :math:`\ket{0}` for the
+    ``inverted`` controls.  An ``inverted`` qubit that is not a control is
+    ignored.
+
+    Parameters
+    ----------
+    controls : Sequence[int]
+        The parent's control qubits.
+    targets : Sequence[int]
+        The parent qubits to flip.
+    inverted : Iterable[int]
+        The controls active on :math:`\ket{0}`.
+
+    Returns
+    -------
+    AnyBlock
+        The placed multi-controlled multi-target :math:`X`.
+    """
+    inverted = set(inverted)
+    return controlled(
+        XnBlock(len(targets)),
+        controls,
+        targets,
+        ctrl_state=[qubit not in inverted for qubit in controls],
+    )
+
+
+class LBMPrimitive(SimpleBlock):
     """
     Base class for all primitive-level quantum components.
 
-    A primitive component is a small, isolated, and structurally parameterizable
-    quantum circuit that can be reused throughout one or multiple algorithms.
-
-    ========================= ======================================================================
-    Attribute                  Summary
-    ========================= ======================================================================
-    :attr:`circuit`           The :class:`.qiskit.QuantumCircuit` of the primitive.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``
-    ========================= ======================================================================
+    A primitive is a small, isolated, and structurally parameterizable
+    circuit that emits gates directly.  Subclasses implement
+    ``build_vanilla`` with the native gate builders (``x``, ``cx``, ``swap``,
+    ``mcx``, ``cp``, ``ry``, ... in scalar or bulk-list form).
     """
 
-    logger: Logger
+    def __init__(self, n_qubits: int, name: Optional[str] = None) -> None:
+        super().__init__(n_qubits, name=name or type(self).__name__)
+        self.build()
+
+
+class LatticePrimitive(LBMPrimitive):
+    """
+    A primitive spanning the full width of a :class:`.Lattice`.
+
+    Qubits are addressed by the global indices the lattice's register
+    helpers return.
+    """
+
+    lattice: Lattice
+
+    def __init__(self, lattice: Lattice, name: Optional[str] = None) -> None:
+        self.lattice = lattice
+        super().__init__(lattice.n_qubits, name)
+
+
+class LBMComposite(CompositeBlockBase):
+    """
+    Base class for components assembled from other blocks.
+
+    Subclasses implement ``build_vanilla`` by placing children with
+    :meth:`place`; a composite never emits gates of its own.
+    """
+
+    def __init__(self, n_qubits: int, name: Optional[str] = None) -> None:
+        super().__init__(n_qubits, name=name or type(self).__name__)
+        self.build()
+
+    def place(self, child: AnyBlock, qubits: Optional[Sequence[int]] = None) -> None:
+        """
+        Wire ``child`` onto ``qubits`` of this block (identity mapping if ``None``).
+
+        Parameters
+        ----------
+        child : AnyBlock
+            The block to add; it must not be placed anywhere else.
+        qubits : Sequence[int] | None
+            The qubits of this block the child acts on, in the child's order.
+        """
+        self.add_wired_child(child if qubits is None else on(child, qubits))
+
+    def invert(self, qubits: Sequence[int]) -> None:
+        """
+        Place a layer of :math:`X` gates on ``qubits`` (nothing if empty).
+
+        Parameters
+        ----------
+        qubits : Sequence[int]
+            The qubits of this block to invert.
+        """
+        if qubits:
+            self.place(x_layer(qubits))
+
+    def place_controlled(
+        self,
+        inner: AnyBlock,
+        controls: Sequence[int],
+        targets: Sequence[int],
+        ctrl_state: Optional[Sequence[bool]] = None,
+    ) -> None:
+        """
+        Wire ``inner`` controlled on ``controls`` and acting on ``targets``.
+
+        With no controls the bare ``inner`` is placed, so callers need no
+        special case for an unconditional operation.
+
+        Parameters
+        ----------
+        inner : AnyBlock
+            The block to control.
+        controls : Sequence[int]
+            The control qubits of this block.
+        targets : Sequence[int]
+            The qubits of this block ``inner`` acts on, in its order.
+        ctrl_state : Sequence[bool] | None
+            The control values that activate ``inner``; all ``True`` if ``None``.
+        """
+        self.place(controlled(inner, controls, targets, ctrl_state))
+
+
+class ControllableComponent(LBMComposite):
+    """
+    A component whose whole circuit is optionally controlled on extra qubits.
+
+    The ``num_ctrl_qubits`` control qubits trail the ``num_qubits`` data
+    qubits, or precede them when ``controls_first`` is set.  Subclasses
+    implement :meth:`build_core`, the uncontrolled circuit over the data qubits.
+    """
+
+    num_qubits: int
+    """The number of data qubits."""
+
+    num_ctrl_qubits: int
+    """Optional additional qubits to control the operation on."""
+
+    controls_first: bool = False
+    """Whether the control qubits precede the data qubits."""
 
     def __init__(
-        self,
-        logger: Logger = getLogger("qlbm"),
+        self, num_qubits: int, num_ctrl_qubits: int = 0, name: Optional[str] = None
     ) -> None:
-        super().__init__(logger)
+        self.num_qubits = num_qubits
+        self.num_ctrl_qubits = num_ctrl_qubits
+        super().__init__(num_qubits + num_ctrl_qubits, name)
+
+    def build_core(self) -> AnyBlock:
+        """
+        The uncontrolled circuit over the ``num_qubits`` data qubits.
+
+        Returns
+        -------
+        AnyBlock
+            A block of width ``num_qubits``.
+        """
+        raise NotImplementedError
+
+    def build_vanilla(self) -> None:
+        """Place the core, controlled on the control qubits if there are any."""
+        if self.controls_first:
+            controls = range(self.num_ctrl_qubits)
+            data = range(self.num_ctrl_qubits, self.n_qubits)
+        else:
+            data = range(self.num_qubits)
+            controls = range(self.num_qubits, self.n_qubits)
+        self.place_controlled(self.build_core(), controls, data)
 
 
-class LBMOperator(QuantumComponent):
+class LBMOperator(LBMComposite):
     """
     Base class for all operator-level quantum components.
 
     An operator component implements a specific physical operation
     corresponding to the classical LBM (streaming, collision, etc.).
     Operators are inferred based on the structure of a :class:`.Lattice`
-    object of an appropriate encoding.
-
-    ========================= ======================================================================
-    Attribute                  Summary
-    ========================= ======================================================================
-    :attr:`circuit`           The :class:`.qiskit.QuantumCircuit` of the operator.
-    :attr:`lattice`           The :class:`.Lattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``
-    ========================= ======================================================================
+    object of an appropriate encoding and span its full width.
     """
 
     lattice: Lattice
 
-    def __init__(
-        self,
-        lattice: Lattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(logger)
+    def __init__(self, lattice: Lattice, name: Optional[str] = None) -> None:
         self.lattice = lattice
+        super().__init__(lattice.n_qubits, name)
 
 
-class MSOperator(LBMOperator):
+class LBMAlgorithm(LBMComposite):
     """
-    Specialization of the :class:`.LBMOperator` operator class for the Multi-Speed Collisionless Quantum Lattice Boltzmann Method algorithm by :cite:t:`collisionless`.
+    Base class for all algorithm-level quantum components.
 
-    Specializations of this class infer their properties
-    based on a :class:`.MSLattice`.
-
-    ========================= ======================================================================
-    Attribute                  Summary
-    ========================= ======================================================================
-    :attr:`circuit`           The :class:`.qiskit.QuantumCircuit` of the operator.
-    :attr:`lattice`           The :class:`.MSLattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``
-    ========================= ======================================================================
-    """
-
-    lattice: MSLattice
-
-    def __init__(
-        self,
-        lattice: MSLattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(lattice, logger)
-        self.lattice = lattice
-
-
-class SpaceTimeOperator(LBMOperator):
-    """
-    Specialization of the :class:`.LBMOperator` operator class for the Space-Time QBM algorithm by :cite:t:`spacetime`.
-
-    Specializations of this class infer their properties
-    based on a :class:`.SpaceTimeLattice`.
-
-    ========================= ======================================================================
-    Attribute                  Summary
-    ========================= ======================================================================
-    :attr:`circuit`           The :class:`.qiskit.QuantumCircuit` of the operator.
-    :attr:`lattice`           The :class:`.SpaceTimeLattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``
-    ========================= ======================================================================
-    """
-
-    lattice: SpaceTimeLattice
-
-    def __init__(
-        self,
-        lattice: SpaceTimeLattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(lattice, logger)
-        self.lattice = lattice
-
-
-class LQLGAOperator(LBMOperator):
-    """
-    Specialization of the :class:`.LBMOperator` operator class for the LQLGA algorithm.
-
-    Specializations of this class infer their properties
-    based on a :class:`.LQLGALattice`.
-
-    ========================= ======================================================================
-    Attribute                  Summary
-    ========================= ======================================================================
-    :attr:`circuit`           The :class:`.qiskit.QuantumCircuit` of the operator.
-    :attr:`lattice`           The :class:`.LQLGALattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``
-    ========================= ======================================================================
-    """
-
-    lattice: LQLGALattice
-
-    def __init__(
-        self,
-        lattice: LQLGALattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(lattice, logger)
-        self.lattice = lattice
-
-
-class LBMAlgorithm(QuantumComponent):
-    """
-    Base class for all end-to-end Quantum Boltzmann Methods.
-
-    An end-to-end algorithm consists of a
-    series of :class:`.LBMOperator` that perform
-    the physical operations of the appropriate algorithm.
-
-    ========================= ======================================================================
-    Attribute                  Summary
-    ========================= ======================================================================
-    :attr:`circuit`           The :class:`.qiskit.QuantumCircuit` of the algorithm.
-    :attr:`lattice`           The :class:`.Lattice` based on which the properties of the algorithm are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``
-    ========================= ======================================================================
+    An algorithm composes operators into one time step of a QLBM over the
+    full width of a :class:`.Lattice`.
     """
 
     lattice: Lattice
 
-    def __init__(
-        self,
-        lattice: Lattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(logger)
+    def __init__(self, lattice: Lattice, name: Optional[str] = None) -> None:
         self.lattice = lattice
+        super().__init__(lattice.n_qubits, name)

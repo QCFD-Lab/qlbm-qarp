@@ -4,12 +4,12 @@ from logging import getLogger
 from typing import Dict, List, Tuple, cast
 
 from numpy import ceil, log2
-from qiskit import QuantumCircuit, QuantumRegister
 from typing_extensions import override
 
 from qlbm.components.ab.encodings import ABEncodingType
 from qlbm.lattice.geometry.shapes.base import Shape
 from qlbm.lattice.geometry.shapes.ymonomial import YMonomial
+from qlbm.lattice.registers import Register, assign_offsets
 from qlbm.lattice.spacetime.properties_base import (
     LatticeDiscretization,
     LatticeDiscretizationProperties,
@@ -89,10 +89,9 @@ class ABLattice(AmplitudeLattice):
             ]
         }
 
-    The register setup can be visualized by constructing a lattice object:
+    The register setup can be inspected by constructing a lattice object:
 
-    .. plot::
-        :include-source:
+    .. code-block:: python
 
         from qlbm.lattice import ABLattice
 
@@ -101,7 +100,7 @@ class ABLattice(AmplitudeLattice):
                 "lattice": {"dim": {"x": 8, "y": 8}, "velocities": "D2Q9"},
                 "geometry": [],
             }
-        ).circuit.draw("mpl")
+        ).registers
     """
 
     discretization: LatticeDiscretization
@@ -135,7 +134,7 @@ class ABLattice(AmplitudeLattice):
     If at least one :class:`.YMonomial` is present, this is :math:`\lceil \log_2 N_{g_x}\rceil`,
     otherwise it is ``0``."""
 
-    registers: Tuple[QuantumRegister, ...]
+    registers: Tuple[Register, ...]
     """The registers of the lattice."""
 
     def __init__(
@@ -226,9 +225,7 @@ class ABLattice(AmplitudeLattice):
                 "Invalid register tuple returned by get_registers()."
             )
 
-        self.registers = tuple(flatten(temp_registers))
-
-        self.circuit = QuantumCircuit(*self.registers)
+        self.registers = assign_offsets(flatten(temp_registers))
 
     def set_num_marker_qubits(self, num_marker_qubits: int):
         """
@@ -261,8 +258,7 @@ class ABLattice(AmplitudeLattice):
         For a given lattice (set number of gridpoints and velocity discretization),
         set multiple geometry configurations to simulate simultaneously.
 
-        .. plot::
-            :include-source:
+        .. code-block:: python
 
             from qlbm.lattice import ABLattice
 
@@ -296,7 +292,7 @@ class ABLattice(AmplitudeLattice):
                 ]
             )
 
-            lattice.circuit.draw("mpl")
+            lattice.registers
 
         In this example, the first geometry is associated with marker state
         ``|0>`` and the second with ``|1>``. List order determines this mapping.
@@ -514,7 +510,7 @@ class ABLattice(AmplitudeLattice):
         return [flatten(list(geometry.values())) for geometry in self.geometries]
 
     @override
-    def get_registers(self) -> Tuple[List[QuantumRegister], ...]:
+    def get_registers(self) -> Tuple[List[Register], ...]:
         """Generates the encoding-specific register required for the streaming step.
 
         For this encoding, different registers encode
@@ -527,33 +523,31 @@ class ABLattice(AmplitudeLattice):
         Returns
         -------
         List[int]
-            Tuple[QuantumRegister]: The 4-tuple of qubit registers encoding the streaming step.
+            Tuple[Register]: The 4-tuple of qubit registers encoding the streaming step.
         """
         # d ancilla qubits used to conditionally reflect velocities
-        ancilla_object_register = [
-            QuantumRegister(self.num_obstacle_qubits, name="a_o")
-        ]
+        ancilla_object_register = [Register(self.num_obstacle_qubits, name="a_o")]
 
         # 2(d-1) ancilla qubits
         ancilla_comparator_register = (
-            [QuantumRegister(self.num_comparator_qubits, name="a_c")]
+            [Register(self.num_comparator_qubits, name="a_c")]
             if self.num_comparator_qubits > 0
             else []
         )
 
         # Velocity qubits
-        velocity_registers = [QuantumRegister(self.num_velocity_qubits, name="v")]
+        velocity_registers = [Register(self.num_velocity_qubits, name="v")]
 
         # Grid qubits
         grid_registers = [
-            QuantumRegister(gp.bit_length(), name=f"g_{dimension_letter(c)}")
+            Register(gp.bit_length(), name=f"g_{dimension_letter(c)}")
             for c, gp in enumerate(self.num_gridpoints)
         ]
 
         # Monomial qubits
         # ! Only works for Ymonomials
         copy_register = (
-            [QuantumRegister(self.num_copy_qubits, name="a_copy")]
+            [Register(self.num_copy_qubits, name="a_copy")]
             if self.num_copy_qubits > 0
             else []
         )
@@ -561,7 +555,7 @@ class ABLattice(AmplitudeLattice):
         # ! Only works for Ymonomials
         monomial_register = (
             [
-                QuantumRegister(
+                Register(
                     self.num_monomial_qubits,
                     name="monomial",
                 )
@@ -572,14 +566,14 @@ class ABLattice(AmplitudeLattice):
 
         if self.has_multiple_geometries():
             marker_register = [
-                QuantumRegister(
+                Register(
                     self.num_marker_qubits,
                     name="m",
                 )
             ]
         elif self.num_marker_qubits > 0:
             marker_register = [
-                QuantumRegister(
+                Register(
                     self.num_marker_qubits,
                     name="m",
                 )
@@ -588,7 +582,7 @@ class ABLattice(AmplitudeLattice):
             marker_register = []
 
         accumulation_register = (
-            [QuantumRegister(self.num_accumulation_qubits, name="acc")]
+            [Register(self.num_accumulation_qubits, name="acc")]
             if self.has_accumulation_register()
             else []
         )
@@ -664,16 +658,3 @@ class ABLattice(AmplitudeLattice):
     @override
     def get_encoding(self) -> ABEncodingType:
         return ABEncodingType.AB
-
-    @override
-    def get_base_circuit(self):
-        return QuantumCircuit(
-            *flatten(
-                [
-                    self.grid_registers,
-                    self.velocity_registers,
-                    self.ancilla_comparator_register,
-                    self.ancilla_object_register,
-                ]
-            ),
-        )

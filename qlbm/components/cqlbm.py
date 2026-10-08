@@ -5,8 +5,6 @@ This is a common entrypoint that supports implementations based on the :class:`.
 Implementations can be found in the :class:`MSQLBM` and :class:`.ABQLBM`, respectively.
 """
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
 from typing import cast
 
 from typing_extensions import override
@@ -25,8 +23,7 @@ class CQLBM(LBMAlgorithm):
 
     Implementations based on lattices with the DdQq discretization use the :class:`.ABQLBM`:
 
-    .. plot::
-        :include-source:
+    .. code-block:: python
 
         from qlbm.components import CQLBM
         from qlbm.lattice import ABLattice
@@ -38,12 +35,11 @@ class CQLBM(LBMAlgorithm):
             }
         )
 
-        CQLBM(lattice).draw("mpl")
+        CQLBM(lattice).plot()
 
     Implementations where the number of velocities is defined per dimension delegate to the :class:`.MSQLBM`.
 
-    .. plot::
-        :include-source:
+    .. code-block:: python
 
         from qlbm.components import CQLBM
         from qlbm.lattice import MSLattice
@@ -55,44 +51,34 @@ class CQLBM(LBMAlgorithm):
             }
         )
 
-        CQLBM(lattice).draw("mpl")
+        CQLBM(lattice).plot()
 
     """
 
-    def __init__(
-        self,
-        lattice: AmplitudeLattice,
-        use_agnostic_bcs: bool = False,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(lattice, logger)
-        self.lattice: AmplitudeLattice = lattice
-        self.use_agnostic_bcs = use_agnostic_bcs
+    lattice: AmplitudeLattice
 
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+    def __init__(
+        self, lattice: AmplitudeLattice, use_agnostic_bcs: bool = False
+    ) -> None:
+        if isinstance(lattice, MSLattice) and use_agnostic_bcs:
+            raise CircuitException("Agnostic BCs are not supported for the MSQLBM.")
+        if not isinstance(lattice, (MSLattice, ABLattice)):
+            raise LatticeException(
+                f"CQLBM does not support lattices of type {type(lattice)}"
+            )
+        self.use_agnostic_bcs = use_agnostic_bcs
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self):
+    def build_vanilla(self) -> None:
         if isinstance(self.lattice, MSLattice):
-            if self.use_agnostic_bcs:
-                raise CircuitException("Agnostic BCs are not supported for the MSQLBM.")
-            return MSQLBM(
-                cast(MSLattice, self.lattice), group_velocities=True, logger=self.logger
-            ).circuit
-        elif isinstance(self.lattice, ABLattice):
-            return ABQLBM(
-                cast(ABLattice, self.lattice),
-                use_agnostic_bcs=self.use_agnostic_bcs,
-                logger=self.logger,
-            ).circuit
+            self.place(MSQLBM(cast(MSLattice, self.lattice), group_velocities=True))
         else:
-            raise LatticeException(
-                f"CQLBM does not support lattices of type {type(self.lattice)}"
+            self.place(
+                ABQLBM(
+                    cast(ABLattice, self.lattice),
+                    use_agnostic_bcs=self.use_agnostic_bcs,
+                )
             )
 
     @override

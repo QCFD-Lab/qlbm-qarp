@@ -1,28 +1,51 @@
-"""A ``SimulationConfig`` ties together algorithmic quantum components, circuit compilers, runners, and performance optimizations."""
+"""A ``SimulationConfig`` ties together the four algorithmic circuits, the optimization level, and the shot budget."""
 
 from logging import Logger, getLogger
+from numbers import Integral
 from typing import Any, List
 
-from qiskit import QuantumCircuit as QiskitQC
-from qiskit.quantum_info import Statevector
-from qiskit_aer.backends.aerbackend import AerBackend
-from qulacs import QuantumCircuit as QulacsQC
-from qulacs import QuantumState
+import numpy as np
+import qarpx as qx
+from qarp import EXACT, Shots
 
-from qlbm.components.base import QuantumComponent
 from qlbm.infra.compiler import CircuitCompiler
 from qlbm.tools.exceptions import ExecutionException
 
 
+def resolve_shots(shots: Any) -> "int | Shots":
+    """
+    The shot budget as a built-in ``int``, or ``qarp.EXACT`` unchanged.
+
+    Parameters
+    ----------
+    shots : Any
+        The requested budget: a positive whole number of any integral type, or ``qarp.EXACT``.
+
+    Returns
+    -------
+    int | Shots
+        ``qarp.EXACT``, or the budget as a built-in ``int``.
+
+    Raises
+    ------
+    ExecutionException
+        If ``shots`` is neither ``qarp.EXACT`` nor a positive whole number.
+    """
+    if shots is EXACT:
+        return EXACT
+    # bool is an integral type, and True would sample a single shot.
+    if isinstance(shots, bool) or not isinstance(shots, Integral) or shots < 1:
+        raise ExecutionException(
+            f"Unsupported shot budget {shots}. Provide a positive integer or qarp.EXACT."
+        )
+    return int(shots)
+
+
 class SimulationConfig:
     """
-    A ``SimulationConfig`` ties together algorithmic quantum components, circuit compilers, runners, and performance optimizations.
+    A ``SimulationConfig`` ties together the algorithmic quantum components, the compiler optimization level, and the shot budget.
 
     This is the most convenient access point for performing simulations with ``qlbm``.
-    In total, the config contains 11 relevant class attributes that together
-    allow users to customize their simulations in a declarative manner.
-    For convenience, we split these attributes by the purpose they serve
-    for the simulation workflow.
 
     Algorithmic attributes specify the complete, end-to-end, QLBM algorithm.
     This includes initial conditions, the time step circuit,
@@ -35,359 +58,176 @@ class SimulationConfig:
         * - Attribute
           - Description
         * - :attr:`initial_conditions`
-          - The initial conditions of the simulations. For example, :class:`.MSInitialConditions` or :class:`.PointWiseSpaceTimeInitialConditions`.
+          - The initial conditions of the simulation. Either a qarp ``Block`` (every component is one) or an LSB-indexed statevector ``np.ndarray``.
         * - :attr:`algorithm`
           - The algorithm that performs the QLBM time step computation. For example, :class:`.CQLBM` or :class:`.SpaceTimeQLBM`.
         * - :attr:`postprocessing`
-          - The quantum component concataned to the ``algorithm``. Usually :class:`.EmptyPrimitive`.
+          - The quantum component concatenated to the ``algorithm``. Usually :class:`.EmptyPrimitive`.
         * - :attr:`measurement`
           - The circuit that samples the quantum state. For example, :class:`.GridMeasurement` or :class:`.SpaceTimeGridVelocityMeasurement`.
 
-    Compiler-related attributes govern how compilers convert algorithmic attributes to the appropriate format.
-    All quantum circuits will be compiled using the same settings.
-
-    .. list-table:: Compiler-related attributes
+    .. list-table:: Execution attributes
         :widths: 25 50
         :header-rows: 1
 
         * - Attribute
           - Description
-        * - :attr:`target_platform`
-          - The platform that the simulation will be carried out on. Either ``"QISKIT"`` or ``"QULACS"``.
-        * - :attr:`compiler_platform`
-          - The platform of the compiler to use. Either ``"QISKIT"`` or ``"TKET"``.
         * - :attr:`optimization_level`
-          - The compiler optimization level.
-
-    Runner-related attributes prescribe how the simulation should proceede.
-    This includes the specific simulators that will execute the circuits,
-    and performance optimization settings.
-
-    .. list-table:: Runner-related attributes
-        :widths: 25 50
-        :header-rows: 1
-
-        * - Attribute
-          - Description
-        * - :attr:`execution_backend`
-          - The specific ``AerSimulator`` use (if using Qiskit) or ``None`` if using Qulacs.
-        * - :attr:`sampling_backend`
-          - The specific ``AerSimulator`` to use if ``statevector_sampling`` is enabled.
-        * - :attr:`statevector_sampling`
-          - Whether statevector sampling should be utilized.
+          - The optimization level qarp applies at execution to the gate runs left after planning a block's structure; 0 (the default) runs them as they are, 1 cancels and fuses adjacent gates, 2 also cancels across commuting gates.
+        * - :attr:`shots`
+          - The default number of shots per time step. ``qarp.EXACT`` returns exact probabilities instead of sampled counts.
 
     .. note::
-        Example configuration: simulating :class:`.SpaceTimeQLBM` with Qiskit.
-        First, we set up the config with the circuits we want to simulate,
-        and the infrastructure we want to use.
+        Example configuration: simulating :class:`.SpaceTimeQLBM`.
 
         .. code-block:: python
 
-            SimulationConfig(
-                initial_conditions=SpaceTimeInitialConditions(
+            cfg = SimulationConfig(
+                initial_conditions=PointWiseSpaceTimeInitialConditions(
                     lattice, grid_data=[((1, 5), (True, True, True, True))]
                 ),
                 algorithm=SpaceTimeQLBM(lattice),
                 postprocessing=EmptyPrimitive(lattice),
                 measurement=SpaceTimeGridVelocityMeasurement(lattice),
-                target_platform="QISKIT",
-                compiler_platform="QISKIT",
                 optimization_level=0,
-                statevector_sampling=True,
-                execution_backend=AerSimulator(method="statevector"),
-                sampling_backend=AerSimulator(method="statevector"),
+                shots=4096,
             )
 
-        Once constructed, the ``cfg`` will figure out the appropriate
-        compiler calls to convert the circuit to the appropriate format.
-        All the user needs to do is call the :meth:`prepare_for_simulation()` method:
-
-        .. code-block:: python
-
+            cfg.validate()
             cfg.prepare_for_simulation()
 
-        The circuits are compiled in-place, which makes it
-        easy to plug in the ``cfg`` object into a :class:`.QiskitRunner`:
+        The circuits are lowered in place, which makes it easy to plug the
+        ``cfg`` object into a :class:`.QarpRunner`:
 
         .. code-block:: python
 
-            # Create a runner object to simulate the circuit
-            runner = QiskitRunner(
-                cfg,
-                lattice,
-            )
-
-            # Simulate the circuits
-            runner.run(
-                10
-                2**12,
-                "output_dir",
-                False
-            )
-
-
-    .. note::
-        Example configuration: simulating :class:`.CQLBM` with Qulacs and Tket.
-
-        .. code-block:: python
-
-            cfg = SimulationConfig(
-                initial_conditions=MSInitialConditions(lattice, logger),
-                algorithm=CQLBM(lattice, logger),
-                postprocessing=EmptyPrimitive(lattice, logger),
-                measurement=GridMeasurement(lattice, logger),
-                target_platform="QULACS",
-                compiler_platform="TKET",
-                optimization_level=0,
-                statevector_sampling=statevector_sampling,
-                execution_backend=None,
-                sampling_backend=AerSimulator(method="statevector"),
-                logger=logger,
-            )
-
-        Once constructed, the ``cfg`` will figure out the appropriate
-        compiler calls to convert the circuit to the appropriate format.
-        All the user needs to do is call the :meth:`prepare_for_simulation()` method:
-
-        .. code-block:: python
-
-            cfg.prepare_for_simulation()
-
-        The circuits are compiled in-place, which makes it
-        easy to plug in the ``cfg`` object into a :class:`.QulacsRunner`:
-
-        .. code-block:: python
-
-            # Create a runner object to simulate the circuit
-            runner = QulacsRunner(
-                cfg,
-                lattice,
-            )
-
-            # Simulate the circuits
-            runner.run(
-                10
-                2**12,
-                "output_dir",
-                True
-            )
-
+            runner = QarpRunner(cfg, lattice)
+            runner.run(10, 4096, "output_dir", statevector_snapshots=True)
     """
 
-    initial_conditions: (
-        Statevector | QiskitQC | QuantumState | QulacsQC | QuantumComponent
-    )
-    algorithm: QiskitQC | QulacsQC | QuantumComponent
-    postprocessing: QiskitQC | QulacsQC | QuantumComponent
-    measurement: QiskitQC | QuantumComponent
-    execution_backend: AerBackend | None
-    sampling_backend: AerBackend
+    initial_conditions: "qx.Block | np.ndarray"
+    algorithm: "qx.Block"
+    postprocessing: "qx.Block"
+    measurement: "qx.Block"
+    optimization_level: int
+    shots: int
     logger: Logger
 
-    QISKIT = "QISKIT"
-    QULACS = "QULACS"
+    circuit_types: List[Any] = [qx.Block]
+    """The accepted types of the four algorithmic attributes."""
 
-    initial_conditions_types = {
-        QISKIT: [Statevector, QiskitQC, QuantumComponent],
-        QULACS: [QuantumState, QulacsQC, QuantumComponent],
-    }
-
-    algorithm_types = {
-        QISKIT: [QiskitQC, QuantumComponent],
-        QULACS: [QulacsQC, QuantumComponent],
-    }
-
-    measurement_types = {
-        QISKIT: [QiskitQC, QuantumComponent],
-        QULACS: [QiskitQC, QuantumComponent],
-    }
-
-    execution_backend_types = {QISKIT: [AerBackend], QULACS: [type(None)]}
-
-    sampling_backend_types = {
-        QISKIT: [AerBackend],
-        QULACS: [AerBackend],
-    }
+    initial_conditions_types: List[Any] = [qx.Block, np.ndarray]
+    """The accepted types of :attr:`initial_conditions` (a statevector is also allowed)."""
 
     def __init__(
         self,
-        initial_conditions: Statevector
-        | QiskitQC
-        | QuantumState
-        | QulacsQC
-        | QuantumComponent,
-        algorithm: QiskitQC | QulacsQC | QuantumComponent,
-        postprocessing: QiskitQC | QulacsQC | QuantumComponent,
-        measurement: QiskitQC | QuantumComponent,
-        target_platform: str,
-        compiler_platform: str,
-        optimization_level: int,
-        statevector_sampling: bool,
-        execution_backend: AerBackend | None,
-        sampling_backend: AerBackend | None,
+        initial_conditions: "qx.Block | np.ndarray",
+        algorithm: "qx.Block",
+        postprocessing: "qx.Block",
+        measurement: "qx.Block",
+        optimization_level: int = 0,
+        shots: int = 1024,
         logger: Logger = getLogger("qlbm"),
     ) -> None:
         # Circuits
         self.initial_conditions = initial_conditions
         self.algorithm = algorithm
-        self.algorithm_copy = (
-            algorithm.circuit.copy()
-            if isinstance(algorithm, QuantumComponent)
-            else algorithm.copy()
-        )
         self.postprocessing = postprocessing
         self.measurement = measurement
 
         # Simulation details
-        self.target_platform = target_platform
-        self.compiler_platform = compiler_platform
         self.optimization_level = optimization_level
-        self.statevector_sampling = statevector_sampling
-
-        # Backends
-        self.execution_backend = execution_backend
-        self.sampling_backend = sampling_backend
+        self.shots = shots
         self.logger = logger
 
     def validate(
         self,
-    ):
+    ) -> None:
         """
         Validates the configuration.
 
         This includes the following checks:
 
         #. The algorithmic attributes are of compatible types.
-        #. The target platform is available.
-        #. The execution backend (if enabled) is compatible with the target platform.
-        #. The sampling backend (if enabled) is compatible with the target platform.
+        #. The optimization level is supported by the compiler.
+        #. The shot budget is either a positive integer or ``qarp.EXACT``.
 
         This function simply checks that the provided attributes are
         suitable - it does not perform any conversions.
+
+        Raises
+        ------
+        ExecutionException
+            If any of the above checks fail.
         """
-        self.__is_appropriate_target_platform(self.target_platform)
         self.__is_compatible_type(
-            self.initial_conditions,
-            self.initial_conditions_types[self.target_platform],
-            "Initial conditions",
-            self.target_platform,
+            self.initial_conditions, self.initial_conditions_types, "Initial conditions"
         )
-
+        self.__is_compatible_type(self.algorithm, self.circuit_types, "Algorithm")
         self.__is_compatible_type(
-            self.algorithm,
-            self.algorithm_types[self.target_platform],
-            "Algorithm",
-            self.target_platform,
+            self.postprocessing, self.circuit_types, "Postprocessing"
         )
+        self.__is_compatible_type(self.measurement, self.circuit_types, "Measurement")
 
-        self.__is_compatible_type(
-            self.postprocessing,
-            self.algorithm_types[self.target_platform],
-            "Postprocessing",
-            self.target_platform,
-        )
-
-        self.__is_compatible_type(
-            self.measurement,
-            self.measurement_types[self.target_platform],
-            "Measurement",
-            self.target_platform,
-        )
-
-        if self.statevector_sampling:
-            self.__is_compatible_type(
-                self.sampling_backend,
-                self.sampling_backend_types[self.target_platform],
-                "Sampling Backend",
-                self.target_platform,
+        if self.optimization_level not in CircuitCompiler.supported_optimization_levels:
+            raise ExecutionException(
+                f"Unsupported optimization level {self.optimization_level}. Supported optimization levels are {CircuitCompiler.supported_optimization_levels}."
             )
 
-        self.__is_compatible_type(
-            self.execution_backend,
-            self.execution_backend_types[self.target_platform],
-            "Execution Backend",
-            self.target_platform,
-        )
+        resolve_shots(self.shots)
 
     def __is_compatible_type(
         self,
         object_to_validate: Any,
         accepted_types: List[Any],
         object_name: str,
-        platform: str,
     ) -> None:
         if not any(isinstance(object_to_validate, t) for t in accepted_types):
             raise ExecutionException(
-                f"{object_name} object of type {type(object_to_validate)} is not in supported types {accepted_types} for platform {platform}",
-            )
-
-    def __is_appropriate_target_platform(self, platform: str) -> None:
-        if platform not in [self.QISKIT, self.QULACS]:
-            raise ExecutionException(
-                f"Platform {platform} unsupported. Supported platforms are: {[self.QISKIT, self.QULACS]}"
+                f"{object_name} object of type {type(object_to_validate)} is not in supported types {accepted_types}",
             )
 
     def prepare_for_simulation(
         self,
     ) -> None:
-        """Converts all algorithmic components to the target platform according to the specification, in place."""
-        self.__perpare_circuits(
-            self.get_execution_compiler(),
-            self.get_sampling_compiler(),
+        """Lowers all algorithmic components into built qarp blocks, in place.
+
+        A statevector supplied as :attr:`initial_conditions` is left untouched
+        - the runner injects it directly into the simulator.
+        """
+        compiler = self.get_execution_compiler()
+
+        if not isinstance(self.initial_conditions, np.ndarray):
+            self.initial_conditions = compiler.compile(
+                self.initial_conditions, self.optimization_level
+            )
+
+        self.algorithm = compiler.compile(self.algorithm, self.optimization_level)
+        self.postprocessing = compiler.compile(
+            self.postprocessing, self.optimization_level
         )
+        # Measurement blocks are never optimized: the peephole passes are
+        # defined over unitaries, and the cbit mapping is the result contract.
+        self.measurement = compiler.compile(self.measurement, 0)
 
     def get_execution_compiler(self) -> CircuitCompiler:
         """
-        Get the :class:`CircuitCompiler` that can converts the algorithmic attributes to the target ``sampling_backend`` simulator.
+        Get the :class:`CircuitCompiler` that lowers the algorithmic attributes into qarp blocks.
 
         Returns
         -------
         CircuitCompiler
             A compatible circuit compiler.
         """
-        self.__is_appropriate_target_platform(self.target_platform)
+        return CircuitCompiler(self.logger)
 
-        return CircuitCompiler(
-            self.compiler_platform, self.target_platform, self.logger
-        )
-
-    def get_sampling_compiler(self) -> CircuitCompiler:
+    def __str__(self) -> str:
         """
-        Get the :class:`CircuitCompiler` that can converts the algorithmic attributes to the target ``execution_backend`` simulator.
+        String representation of the configuration.
 
         Returns
         -------
-        CircuitCompiler
-            A compatible circuit compiler.
+        str
+            The string representation.
         """
-        return (
-            CircuitCompiler(self.compiler_platform, "QISKIT", self.logger)
-            if self.statevector_sampling
-            else self.get_execution_compiler()
-        )
-
-    def __perpare_circuits(
-        self, execution_compiler: CircuitCompiler, sampling_compiler: CircuitCompiler
-    ) -> None:
-        if not isinstance(self.initial_conditions, Statevector):
-            self.initial_conditions = execution_compiler.compile(
-                self.initial_conditions, self.execution_backend, self.optimization_level
-            )
-
-        self.algorithm = execution_compiler.compile(
-            self.algorithm, self.execution_backend, self.optimization_level
-        )
-        self.postprocessing = sampling_compiler.compile(
-            self.postprocessing,
-            self.sampling_backend
-            if self.statevector_sampling
-            else self.execution_backend,
-            self.optimization_level,
-        )
-        self.measurement = sampling_compiler.compile(
-            self.measurement,
-            self.sampling_backend
-            if self.statevector_sampling
-            else self.execution_backend,
-            self.optimization_level,
-        )
+        return f"[SimulationConfig with optimization_level={self.optimization_level}, shots={self.shots}]"

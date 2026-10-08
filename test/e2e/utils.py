@@ -3,41 +3,78 @@
 from typing import Dict, Tuple
 
 import numpy as np
-from qiskit import QuantumCircuit, transpile
-from qiskit.quantum_info import Statevector
-from qiskit_aer import AerSimulator
+import qarpx as qx
+
+from test.builders import CircuitBuilder
 
 
-def run_statevector(circuit: QuantumCircuit) -> Statevector:
-    """Run a circuit on AerSimulator and return the final statevector.
+class E2ECircuit:
+    """Composable circuit wrapper around :class:`.CircuitBuilder`."""
+
+    def __init__(self, n_qubits: int):
+        self.n_qubits = n_qubits
+        self._builder = CircuitBuilder(n_qubits, name="e2e")
+
+    def x(self, qubit: int) -> None:
+        """Pauli-X on ``qubit``."""
+        self._builder.x(qubit)
+
+    def compose(self, block, qubits=None) -> "E2ECircuit":
+        """Append a block or another E2ECircuit, placed on ``qubits`` if given."""
+        if isinstance(block, E2ECircuit):
+            block = block.build()
+        self._builder.compose(block, qubits=qubits)
+        return self
+
+    def build(self) -> "qx.Block":
+        """Return the finished, built block."""
+        return self._builder.build()
+
+
+def as_circuit(block) -> E2ECircuit:
+    """Wrap an already-built block in a composable :class:`.E2ECircuit`.
+
+    Blocks have no ``copy()`` and are not composable in place.
+    """
+    block.build()
+    circuit = E2ECircuit(block.n_qubits)
+    circuit.compose(block)
+    return circuit
+
+
+def _as_block(circuit) -> "qx.Block":
+    """Resolve an E2ECircuit or a block to a built Block."""
+    if isinstance(circuit, E2ECircuit):
+        return circuit.build()
+    block = circuit
+    block.build()
+    return block
+
+
+def run_statevector(circuit) -> np.ndarray:
+    """Simulate a circuit and return the final statevector.
 
     Parameters
     ----------
-    circuit : QuantumCircuit
-        The circuit to simulate. A ``save_statevector`` instruction is
-        appended automatically.
+    circuit : E2ECircuit | qx.Block
+        The circuit to simulate.
 
     Returns
     -------
-    Statevector
-        The resulting statevector.
+    np.ndarray
+        The resulting statevector, LSB-indexed (qubit 0 = least significant
+        bit), which is the order the decode helpers below assume.
     """
-    qc = circuit.copy()
-    qc.save_statevector()
-    sim = AerSimulator(method="statevector")
-    tqc = transpile(qc, sim, optimization_level=0)
-    result = sim.run(tqc).result()
-    return result.data(0)["statevector"]
+    block = _as_block(circuit)
+    return np.asarray(qx.QarpSimulator().statevector(block.flatten(), block.n_qubits))
 
 
-def get_nonzero_amplitudes(
-    sv: Statevector, threshold: float = 1e-8
-) -> Dict[int, complex]:
+def get_nonzero_amplitudes(sv, threshold: float = 1e-8) -> Dict[int, complex]:
     """Return a dict mapping basis-state index to amplitude for nonzero entries.
 
     Parameters
     ----------
-    sv : Statevector
+    sv : np.ndarray
         The statevector to inspect.
     threshold : float
         Amplitude magnitude below which entries are treated as zero.
@@ -159,7 +196,7 @@ def make_ms_qubit_layout(lattice) -> Dict[str, Tuple[int, int]]:
 
 def prepare_single_particle(
     lattice, grid_pos: Tuple[int, ...], velocity_channel: int
-) -> QuantumCircuit:
+) -> E2ECircuit:
     """Prepare a circuit with one particle at a specific position and velocity.
 
     Parameters
@@ -173,10 +210,10 @@ def prepare_single_particle(
 
     Returns
     -------
-    QuantumCircuit
+    E2ECircuit
         A circuit that prepares the desired initial state.
     """
-    circuit = QuantumCircuit(*lattice.registers)
+    circuit = E2ECircuit(lattice.n_qubits)
     for dim, pos in enumerate(grid_pos):
         for i in range(lattice.num_gridpoints[dim].bit_length()):
             if (pos >> i) & 1:
@@ -192,7 +229,7 @@ def prepare_ms_particle(
     grid_pos: Tuple[int, ...],
     velocity_mag: Tuple[int, ...],
     velocity_dir: Tuple[int, ...],
-) -> QuantumCircuit:
+) -> E2ECircuit:
     """Prepare a circuit with one MS particle at a given position and velocity.
 
     Parameters
@@ -208,10 +245,10 @@ def prepare_ms_particle(
 
     Returns
     -------
-    QuantumCircuit
+    E2ECircuit
         A circuit that prepares the desired initial state.
     """
-    circuit = QuantumCircuit(*lattice.registers)
+    circuit = E2ECircuit(lattice.n_qubits)
     for dim, pos in enumerate(grid_pos):
         for i in range(len(lattice.grid_index(dim))):
             if (pos >> i) & 1:

@@ -87,7 +87,7 @@ def lqlga_lattice() -> LQLGALattice:
 
 @pytest.fixture
 def compiler() -> CircuitCompiler:
-    return CircuitCompiler("QISKIT", "QISKIT")
+    return CircuitCompiler()
 
 
 @pytest.fixture
@@ -95,7 +95,6 @@ def temp_dir():
     d = tempfile.mkdtemp()
     yield d
     shutil.rmtree(d)
-
 
 
 class TestCreateResult:

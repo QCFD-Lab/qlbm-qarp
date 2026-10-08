@@ -1,33 +1,27 @@
 from itertools import product
 
 import pytest
-from qiskit import QuantumCircuit, transpile
-from qiskit_aer import AerSimulator
 
 from qlbm.components.common.primitives import AdditionConversion
 from qlbm.tools.utils import bit_value
+from test.builders import CircuitBuilder
+
+from .qarp_helpers import sample_register_counts
 
 
 @pytest.mark.parametrize(
     "nq,state_in,state_out", list(product([4], [1, 4, 7, 11, 14], [0, 2, 8, 9, 12]))
 )
 def test_addition_conversion(nq, state_in, state_out):
-    sim = AerSimulator()
-
-    qc = QuantumCircuit(nq + 1)
+    builder = CircuitBuilder(nq + 1)
     for q in range(nq):
         if bit_value(state_in, q):
-            qc.x(q)
+            builder.x(q)
 
-    qc.compose(
-        AdditionConversion(nq, state_in, state_out).circuit,
-        inplace=True,
-    )
-    qc.measure_all()
-    tqc = transpile(qc, sim, optimization_level=0)
+    builder.compose(AdditionConversion(nq, state_in, state_out))
 
-    counts = sim.run(tqc, shots=128).result().get_counts()
+    counts = sample_register_counts(builder, range(nq + 1), shots=128)
 
-    assert all(int(c, 2) == state_out for c in counts.keys()), (
+    assert all(outcome == state_out for outcome in counts), (
         f"{state_in} handled incorrectly. Expected {state_out}, got {counts}."
     )

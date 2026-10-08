@@ -1,19 +1,15 @@
 """Collision operator for the :math:`D_2Q_4` discretization :class:`.SpaceTimeQLBM` algorithm as described in :cite:`spacetime`."""
 
-from logging import Logger, getLogger
 from math import pi
-from time import perf_counter_ns
 
-from qiskit import QuantumCircuit
-from qiskit.circuit import Gate
-from qiskit.circuit.library import MCMTGate, RYGate
+from qarp.blocks import AnyBlock, CompositeBlock, SimpleBlock
 from typing_extensions import override
 
-from qlbm.components.base import SpaceTimeOperator
+from qlbm.components.base import LBMOperator, controlled
 from qlbm.lattice.lattices.spacetime_lattice import SpaceTimeLattice
 
 
-class SpaceTimeD2Q4CollisionOperator(SpaceTimeOperator):
+class SpaceTimeD2Q4CollisionOperator(LBMOperator):
     r"""An operator that performs collision part of the :class:`.SpaceTimeQLBM` algorithm.
 
     Collision is a local operation that is performed simultaneously on all velocity qubits corresponding to a grid location.
@@ -36,8 +32,7 @@ class SpaceTimeD2Q4CollisionOperator(SpaceTimeOperator):
     ========================= ======================================================================
     :attr:`lattice`           The :class:`.SpaceTimeLattice` based on which the properties of the operator are inferred.
     :attr:`timestep`          The time step for which to perform streaming.
-    :attr:`gate_to_apply`     The gate to apply to the velocities matching equivalence classes. Defaults to :math:`R_y(\frac{\pi}{2})`.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
+    :attr:`gate_to_apply`     A built single-qubit ``qx.Block`` to apply to the velocities matching equivalence classes. ``None`` (the default) means :math:`R_y(\frac{\pi}{2})`.
     ========================= ======================================================================
 
 
@@ -59,102 +54,80 @@ class SpaceTimeD2Q4CollisionOperator(SpaceTimeOperator):
         )
 
         # Draw the collision operator for 1 time step
-        SpaceTimeD2Q4CollisionOperator(lattice=lattice, timestep=1).draw("mpl")
+        SpaceTimeD2Q4CollisionOperator(lattice=lattice, timestep=1).plot()
     """
+
+    lattice: SpaceTimeLattice
 
     def __init__(
         self,
         lattice: SpaceTimeLattice,
         timestep: int,
-        gate_to_apply: Gate = RYGate(pi / 2),
-        logger: Logger = getLogger("qlbm"),
+        gate_to_apply: AnyBlock | None = None,
     ) -> None:
-        super().__init__(lattice, logger)
-        self.lattice = lattice
         self.timestep = timestep
         self.gate_to_apply = gate_to_apply
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = self.lattice.circuit.copy()
-
-        collision_circuit = self.local_collision_circuit(reset_state=False)
-        collision_circuit.compose(
-            MCMTGate(
-                self.gate_to_apply,
-                self.lattice.properties.get_num_velocities_per_point() - 1,
-                1,
-            ),
-            qubits=list(
-                range(1, self.lattice.properties.get_num_velocities_per_point())
-            )
-            + [0],
-            inplace=True,
-        )
-
-        # Create the local circuit once
-        collision_circuit.compose(
-            self.local_collision_circuit(reset_state=True), inplace=True
-        )
-
+    def build_vanilla(self) -> None:
+        properties = self.lattice.properties
+        stride = properties.get_num_velocities_per_point()
+        first = properties.get_num_grid_qubits()
         # Append the collision circuit at each step
-        for velocity_qubit_indices in range(
-            self.lattice.properties.get_num_grid_qubits(),
-            self.lattice.properties.get_num_grid_qubits()
-            + self.lattice.properties.get_num_velocity_qubits(self.timestep),
-            self.lattice.properties.get_num_velocities_per_point(),
+        for start in range(
+            first, first + properties.get_num_velocity_qubits(self.timestep), stride
         ):
-            circuit.compose(
-                collision_circuit,
-                inplace=True,
-                qubits=range(velocity_qubit_indices, velocity_qubit_indices + 4),
-            )
-        return circuit
+            self.place(self.__local_collision_operator(), range(start, start + stride))
 
-    def local_collision_circuit(self, reset_state: bool) -> QuantumCircuit:
+    def __local_collision_operator(self) -> AnyBlock:
+        num_velocities = self.lattice.properties.get_num_velocities_per_point()
+        control_qubits = list(range(1, num_velocities))
+        if self.gate_to_apply is None:
+            gate = SimpleBlock(1, name="ry")
+            gate.ry(0, pi / 2)
+        else:
+            gate = self.gate_to_apply
+        return CompositeBlock(
+            [
+                self.local_collision_circuit(reset_state=False),
+                controlled(gate, control_qubits, [0]),
+                self.local_collision_circuit(reset_state=True),
+            ],
+            num_velocities,
+            name="local_collision",
+        )
+
+    def local_collision_circuit(self, reset_state: bool) -> AnyBlock:
         """
-        Sets the state for the collision circuit one local gridpoint and its corresponding velocity qubits.
+        The permutation that maps the colliding velocity states onto the control pattern (or back).
 
         Parameters
         ----------
         reset_state : bool
-            Whether the circuit sets or re-sets the state past the application of the rotation operator.
+            Whether to apply the mirrored circuit that undoes the mapping.
 
         Returns
         -------
-        QuantumCircuit
-            The collision (re-)set circuit for a single gridpoint.
+        AnyBlock
+            The block over one velocity register.
         """
-        circuit = QuantumCircuit(self.lattice.properties.get_num_velocities_per_point())
-
-        # circuit.cx(1, 2)
-        # circuit.cx(0, 1)
-        # circuit.cx(0, 3)
-
-        # return circuit if not reset_state else circuit.inverse()
-
+        num_velocities = self.lattice.properties.get_num_velocities_per_point()
+        block = SimpleBlock(num_velocities, name="local_collision_map")
         if not reset_state:
-            circuit.cx(control_qubit=0, target_qubit=2)
-            circuit.x(0)
-            circuit.cx(control_qubit=1, target_qubit=3)
-            circuit.cx(control_qubit=0, target_qubit=1)
-            circuit.x(list(range(circuit.num_qubits)))
+            block.cx(0, 2)
+            block.x(0)
+            block.cx(1, 3)
+            block.cx(0, 1)
+            block.x(list(range(num_velocities)))
         # Same circuit, but mirrored
         else:
-            circuit.x(list(range(circuit.num_qubits)))
-            circuit.cx(control_qubit=0, target_qubit=1)
-            circuit.cx(control_qubit=1, target_qubit=3)
-            circuit.x(0)
-            circuit.cx(control_qubit=0, target_qubit=2)
-
-        return circuit
+            block.x(list(range(num_velocities)))
+            block.cx(0, 1)
+            block.cx(1, 3)
+            block.x(0)
+            block.cx(0, 2)
+        return block
 
     @override
     def __str__(self) -> str:

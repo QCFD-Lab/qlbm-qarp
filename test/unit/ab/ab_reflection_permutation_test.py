@@ -1,12 +1,27 @@
 import pytest
-from qiskit import QuantumCircuit, transpile
-from qiskit_aer import AerSimulator
 
 from qlbm.components.ab.encodings import ABEncodingType
 from qlbm.components.ab.reflection import ABBounceBackReflectionPermutation
 from qlbm.components.ab.reflection.common import ABSpecularReflectionPermutation
 from qlbm.lattice.spacetime.properties_base import LatticeDiscretization
 from qlbm.tools.utils import bit_value
+from test.builders import CircuitBuilder
+
+from .qarp_helpers import sample_register_counts
+
+NUM_QUBITS = 4
+
+
+def _run_permutation(state_in: int, permutation_block) -> set:
+    """Prepare ``|state_in>``, apply the permutation, return the outcome set."""
+    builder = CircuitBuilder(NUM_QUBITS)
+    for q in range(NUM_QUBITS):
+        if bit_value(state_in, q):
+            builder.x(q)
+
+    builder.compose(permutation_block)
+
+    return set(sample_register_counts(builder, range(NUM_QUBITS), shots=128))
 
 
 @pytest.mark.parametrize(
@@ -15,28 +30,17 @@ from qlbm.tools.utils import bit_value
     + [(i, i) for i in range(9, 16)],
 )
 def test_reflectionpermutation_outcomes_d2q9_bounceback(permutation_outcome_pairs):
-    nq = 4
-    sim = AerSimulator()
-
-    qc = QuantumCircuit(nq)
-    for q in range(nq):
-        if bit_value(permutation_outcome_pairs[0], q):
-            qc.x(q)
-
-    qc.compose(
+    outcomes = _run_permutation(
+        permutation_outcome_pairs[0],
         ABBounceBackReflectionPermutation(
-            nq, LatticeDiscretization.D2Q9, ABEncodingType.AB
-        ).circuit,
-        inplace=True,
+            NUM_QUBITS, LatticeDiscretization.D2Q9, ABEncodingType.AB
+        ),
     )
-    qc.measure_all()
-    tqc = transpile(qc, sim, optimization_level=0)
 
-    counts = sim.run(tqc, shots=128).result().get_counts()
-
-    assert all(
-        int(c, 2) == permutation_outcome_pairs[1] for c in counts.keys()
-    ), f"{permutation_outcome_pairs} handled incorrectly. Expected {permutation_outcome_pairs}, got {counts}."
+    assert outcomes == {permutation_outcome_pairs[1]}, (
+        f"{permutation_outcome_pairs} handled incorrectly. "
+        f"Expected {permutation_outcome_pairs[1]}, got {outcomes}."
+    )
 
 
 @pytest.mark.parametrize(
@@ -45,31 +49,20 @@ def test_reflectionpermutation_outcomes_d2q9_bounceback(permutation_outcome_pair
     + [(i, i) for i in range(9, 16)],
 )
 def test_reflectionpermutation_outcomes_d2q9_specular_rx(permutation_outcome_pairs):
-    nq = 4
-    sim = AerSimulator()
-
-    qc = QuantumCircuit(nq)
-    for q in range(nq):
-        if bit_value(permutation_outcome_pairs[0], q):
-            qc.x(q)
-
-    qc.compose(
+    outcomes = _run_permutation(
+        permutation_outcome_pairs[0],
         ABSpecularReflectionPermutation(
-            nq,
+            NUM_QUBITS,
             LatticeDiscretization.D2Q9,
             ABEncodingType.AB,
             reflect_in_dim=(True, False),
-        ).circuit,
-        inplace=True,
+        ),
     )
-    qc.measure_all()
-    tqc = transpile(qc, sim, optimization_level=0)
 
-    counts = sim.run(tqc, shots=128).result().get_counts()
-
-    assert all(
-        int(c, 2) == permutation_outcome_pairs[1] for c in counts.keys()
-    ), f"{permutation_outcome_pairs} handled incorrectly. Expected {permutation_outcome_pairs}, got {counts}."
+    assert outcomes == {permutation_outcome_pairs[1]}, (
+        f"{permutation_outcome_pairs} handled incorrectly. "
+        f"Expected {permutation_outcome_pairs[1]}, got {outcomes}."
+    )
 
 
 @pytest.mark.parametrize(
@@ -78,61 +71,39 @@ def test_reflectionpermutation_outcomes_d2q9_specular_rx(permutation_outcome_pai
     + [(i, i) for i in range(9, 16)],
 )
 def test_reflectionpermutation_outcomes_d2q9_specular_ry(permutation_outcome_pairs):
-    nq = 4
-    sim = AerSimulator()
-
-    qc = QuantumCircuit(nq)
-    for q in range(nq):
-        if bit_value(permutation_outcome_pairs[0], q):
-            qc.x(q)
-
-    qc.compose(
+    outcomes = _run_permutation(
+        permutation_outcome_pairs[0],
         ABSpecularReflectionPermutation(
-            nq,
+            NUM_QUBITS,
             LatticeDiscretization.D2Q9,
             ABEncodingType.AB,
             reflect_in_dim=(False, True),
-        ).circuit,
-        inplace=True,
+        ),
     )
-    qc.measure_all()
-    tqc = transpile(qc, sim, optimization_level=0)
 
-    counts = sim.run(tqc, shots=128).result().get_counts()
-
-    assert all(
-        int(c, 2) == permutation_outcome_pairs[1] for c in counts.keys()
-    ), f"{permutation_outcome_pairs} handled incorrectly. Expected {permutation_outcome_pairs}, got {counts}."
+    assert outcomes == {permutation_outcome_pairs[1]}, (
+        f"{permutation_outcome_pairs} handled incorrectly. "
+        f"Expected {permutation_outcome_pairs[1]}, got {outcomes}."
+    )
 
 
 @pytest.mark.parametrize(
     "permutation_outcome_pairs",
     [(0, 0), (1, 3), (2, 4), (3, 1), (4, 2), (5, 7), (6, 8), (7, 5), (8, 6)]
-    + [(i, i) for i in range(9, 16)], 
+    + [(i, i) for i in range(9, 16)],
 )
 def test_reflectionpermutation_outcomes_d2q9_specular_rxry(permutation_outcome_pairs):
-    nq = 4
-    sim = AerSimulator()
-
-    qc = QuantumCircuit(nq)
-    for q in range(nq):
-        if bit_value(permutation_outcome_pairs[0], q):
-            qc.x(q)
-
-    qc.compose(
+    outcomes = _run_permutation(
+        permutation_outcome_pairs[0],
         ABSpecularReflectionPermutation(
-            nq,
+            NUM_QUBITS,
             LatticeDiscretization.D2Q9,
             ABEncodingType.AB,
             reflect_in_dim=(True, True),
-        ).circuit,
-        inplace=True,
+        ),
     )
-    qc.measure_all()
-    tqc = transpile(qc, sim, optimization_level=0)
 
-    counts = sim.run(tqc, shots=128).result().get_counts()
-
-    assert all(
-        int(c, 2) == permutation_outcome_pairs[1] for c in counts.keys()
-    ), f"{permutation_outcome_pairs} handled incorrectly. Expected {permutation_outcome_pairs}, got {counts}."
+    assert outcomes == {permutation_outcome_pairs[1]}, (
+        f"{permutation_outcome_pairs} handled incorrectly. "
+        f"Expected {permutation_outcome_pairs[1]}, got {outcomes}."
+    )

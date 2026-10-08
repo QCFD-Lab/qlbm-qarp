@@ -1,101 +1,112 @@
-from qiskit import QuantumCircuit, transpile
-from qiskit.result import Counts
-from qiskit_aer import AerSimulator
+"""Sampling tests for the Hamming-weight adder used by the LQLGA family.
+
+``QarpSimulator.run`` returns ``dict[int, int]`` keyed by the LSB-indexed
+classical register, so a key
+``k`` carries qubit ``i`` in bit ``i``: the 4-qubit ``x`` register occupies
+bits 0-3 and the 4-qubit ``y`` register bits 4-7, ``y`` LSB first.
+"""
+
+import qarpx as qx
 
 from qlbm.components.common import HammingWeightAdder
+from test.builders import CircuitBuilder
+
+NUM_QUBITS = 8
+SHOTS = 128
+SEED = 7
 
 
-def bit_string_to_bool_list(bitstring):
-    return [x == "1" for x in bitstring]
+def hamming_weight(value: int) -> int:
+    """Number of set bits in ``value``."""
+    return int(value).bit_count()
 
 
-def hamming_weight(bitstring):
-    return len([True for x in bitstring if x == "1"])
+def x_register(key: int, size: int = 4) -> int:
+    """Value of the low ``size``-qubit register in a counts key."""
+    return key & ((1 << size) - 1)
 
 
-def get_count_from_circuit(circuit, num_shots=128) -> Counts:
-    sim = AerSimulator()
-    tqc = transpile(circuit, sim)
+def y_register(key: int, offset: int = 4, size: int = 4) -> int:
+    """Value of the register starting at qubit ``offset`` in a counts key."""
+    return (key >> offset) & ((1 << size) - 1)
 
-    res = sim.run(tqc, num_shots=num_shots).result()
-    return res.get_counts()
+
+def get_counts(builder: CircuitBuilder, num_shots: int = SHOTS):
+    """Measure every qubit into the matching cbit and sample the circuit."""
+    for qubit in range(builder.n_qubits):
+        builder.measure(qubit, qubit)
+    block = builder.build()
+    return (
+        qx.QarpSimulator()
+        .run(block.flatten(), block.n_qubits, num_shots, seed=SEED)
+        .counts
+    )
 
 
 def test_hamming_adder_all_0s():
-    adder = HammingWeightAdder(3, 5).circuit
-    adder.measure_all()
-    counts = get_count_from_circuit(adder)
+    """Adding onto ``|0...0>`` leaves the register in the all-zero state."""
+    builder = CircuitBuilder(NUM_QUBITS)
+    builder.compose(HammingWeightAdder(3, 5))
+    counts = get_counts(builder)
 
     assert len(counts) == 1
-    assert (int(s, 2) == 0 for s in counts)
+    assert all(key == 0 for key in counts)
 
 
 def test_hamming_adder_1plus0():
-    circuit = QuantumCircuit(8)
-    circuit.x(3)
-    adder = HammingWeightAdder(4, 4).circuit
-    adder.measure_all()
-    circuit.compose(adder, inplace=True)
-    counts = get_count_from_circuit(circuit)
+    """Weight 1 in ``x`` added onto ``y = 0``; ``x`` is preserved."""
+    builder = CircuitBuilder(NUM_QUBITS)
+    builder.x(3)
+    builder.compose(HammingWeightAdder(4, 4))
+    counts = get_counts(builder)
 
     assert len(counts) == 1
-    assert all(int(s[4:][::-1], 2) == 1 for s in counts)
+    assert all(x_register(key) == 0b1000 for key in counts)
+    assert all(y_register(key) == 1 for key in counts)
 
 
 def test_hamming_adder_2plus0():
-    # Hamming weight 2 in the x register
-    # Number 0 in the y register
-    circuit = QuantumCircuit(8)
-    circuit.x(0)
-    circuit.x(3)
-    adder = HammingWeightAdder(4, 4).circuit
-    adder.measure_all()
-    circuit.compose(adder, inplace=True)
-    counts = get_count_from_circuit(circuit)
+    """Weight 2 in ``x`` added onto ``y = 0``."""
+    builder = CircuitBuilder(NUM_QUBITS)
+    builder.x([0, 3])
+    builder.compose(HammingWeightAdder(4, 4))
+    counts = get_counts(builder)
 
     assert len(counts) == 1
-    assert all(int(s[:4], 2) == 2 for s in counts)
+    assert all(y_register(key) == 2 for key in counts)
 
 
 def test_hamming_adder_2plus4():
-    # Hamming weight 2 in the x register
-    # Number 4 in the y register
-    circuit = QuantumCircuit(8)
-    circuit.x(0)
-    circuit.x(3)
-    circuit.x(6)
-    adder = HammingWeightAdder(4, 4).circuit
-    adder.measure_all()
-    circuit.compose(adder, inplace=True)
-    counts = get_count_from_circuit(circuit)
+    """Weight 2 in ``x`` added onto ``y = 4``."""
+    builder = CircuitBuilder(NUM_QUBITS)
+    builder.x([0, 3, 6])
+    builder.compose(HammingWeightAdder(4, 4))
+    counts = get_counts(builder)
 
     assert len(counts) == 1
-    assert all(int(s[:4], 2) == 6 for s in counts)
+    assert all(y_register(key) == 6 for key in counts)
 
 
 def test_hamming_adder_twice():
-    # Hamming weight 2 in the x register
-    # Number 0 in the y register
-    circuit = QuantumCircuit(8)
-    circuit.x(0)
-    circuit.x(3)
-    adder = HammingWeightAdder(4, 4).circuit
-    circuit.compose(adder, inplace=True)
-    circuit.compose(adder, inplace=True)
-    circuit.measure_all()
-    counts = get_count_from_circuit(circuit)
+    """Applying the adder twice accumulates the weight twice."""
+    builder = CircuitBuilder(NUM_QUBITS)
+    builder.x([0, 3])
+    # Fresh instance per placement: a block child carries exactly one placement.
+    builder.compose(HammingWeightAdder(4, 4))
+    builder.compose(HammingWeightAdder(4, 4))
+    counts = get_counts(builder)
 
     assert len(counts) == 1
-    assert all(int(s[:4], 2) == 4 for s in counts)
+    assert all(y_register(key) == 4 for key in counts)
 
 
 def test_hamming_adder_superposition_x():
-    circuit = QuantumCircuit(8)
-    circuit.h([0, 1, 2, 3])
-    circuit.x(6)
-    adder = HammingWeightAdder(4, 4).circuit
-    adder.measure_all()
-    circuit.compose(adder, inplace=True)
-    counts = get_count_from_circuit(circuit)
+    """A uniform ``x`` superposition adds its own weight onto ``y = 4``."""
+    builder = CircuitBuilder(NUM_QUBITS)
+    builder.h([0, 1, 2, 3])
+    builder.x(6)
+    builder.compose(HammingWeightAdder(4, 4))
+    counts = get_counts(builder, num_shots=4096)
+
     assert len(counts) == 16
-    assert all(int(s[:4], 2) == (hamming_weight(s[4:]) + 4) for s in counts)
+    assert all(y_register(key) == hamming_weight(x_register(key)) + 4 for key in counts)

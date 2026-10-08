@@ -1,18 +1,15 @@
 """Measurement operator for the :class:`.SpaceTimeQLBM` algorithm :cite:`spacetime`."""
 
-from logging import Logger, getLogger
 from typing import Tuple
 
-from qiskit import ClassicalRegister
-from qiskit.circuit.library import MCMTGate, XGate
 from typing_extensions import override
 
-from qlbm.components.base import SpaceTimeOperator
+from qlbm.components.base import LatticePrimitive
 from qlbm.lattice.lattices.spacetime_lattice import SpaceTimeLattice
 from qlbm.tools.utils import flatten, get_qubits_to_invert
 
 
-class SpaceTimeGridVelocityMeasurement(SpaceTimeOperator):
+class SpaceTimeGridVelocityMeasurement(LatticePrimitive):
     """A primitive that implements a measurement operation on the grid and the local velocity qubits.
 
     Used at the end of the simulation to extract information from the quantum state.
@@ -23,7 +20,6 @@ class SpaceTimeGridVelocityMeasurement(SpaceTimeOperator):
     Attribute                  Summary
     ========================= ======================================================================
     :attr:`lattice`           The :class:`.SpaceTimeLattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
     ========================= ======================================================================
 
 
@@ -45,107 +41,66 @@ class SpaceTimeGridVelocityMeasurement(SpaceTimeOperator):
         )
 
         # Draw the measurement circuit
-        SpaceTimeGridVelocityMeasurement(lattice=lattice).draw("mpl")
+        SpaceTimeGridVelocityMeasurement(lattice=lattice).plot()
     """
 
-    def __init__(
-        self,
-        lattice: SpaceTimeLattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(lattice, logger)
-        self.lattice = lattice
+    lattice: SpaceTimeLattice
 
-        self.circuit = self.create_circuit()
+    def __init__(self, lattice: SpaceTimeLattice) -> None:
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self):
-        circuit = self.lattice.circuit.copy()
-
+    def build_vanilla(self) -> None:
         qubits_to_measure = self.lattice.grid_index() + self.lattice.velocity_index(0)
-        circuit.add_register(
-            ClassicalRegister(
-                self.lattice.properties.get_num_grid_qubits()
-                + self.lattice.properties.get_num_velocities_per_point()
-            )
-        )
-
-        circuit.measure(
-            qubits_to_measure,
-            list(range(len(qubits_to_measure))),
-        )
-
-        return circuit
+        self.measure([(qubit, cbit) for cbit, qubit in enumerate(qubits_to_measure)])
 
     @override
     def __str__(self) -> str:
         return f"[SpaceTimeGridVelocityMeasurement for lattice {self.lattice}]"
 
 
-class SpaceTimePointWiseMassMeasurement(SpaceTimeOperator):
+class SpaceTimePointWiseMassMeasurement(LatticePrimitive):
     """
     A primitive that performs mass measurement.
 
     WIP.
     """
 
+    lattice: SpaceTimeLattice
+
     def __init__(
         self,
         lattice: SpaceTimeLattice,
         gridpoint: Tuple[int, int],
         velocity_index_to_measure: int,
-        logger: Logger = getLogger("qlbm"),
     ) -> None:
-        self.lattice = lattice
         self.gridpoint = gridpoint
         self.velocity_index_to_measure = velocity_index_to_measure
-        self.logger = logger
-
-        self.circuit = self.create_circuit()
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self):
-        circuit = self.lattice.circuit.copy()
-
-        circuit.add_register(ClassicalRegister(1))
-
-        qubits_to_invert = [
-            get_qubits_to_invert(coord, self.lattice.num_gridpoints[dim].bit_length())
-            for dim, coord in enumerate(self.gridpoint)
-        ]
-
-        for dim in range(self.lattice.num_dims):
-            for i in range(len(qubits_to_invert[dim])):
-                qubits_to_invert[dim][i] += (
-                    self.lattice.properties.get_num_previous_grid_qubits(dim)
-                )
-
-        qubits_to_invert = flatten(qubits_to_invert)
-
-        if qubits_to_invert:
-            circuit.x(qubits_to_invert)
-
+    def build_vanilla(self) -> None:
+        qubits_to_invert = flatten(
+            [
+                [
+                    qubit + self.lattice.properties.get_num_previous_grid_qubits(dim)
+                    for qubit in get_qubits_to_invert(
+                        coord, self.lattice.num_gridpoints[dim].bit_length()
+                    )
+                ]
+                for dim, coord in enumerate(self.gridpoint)
+            ]
+        )
         control_qubits = self.lattice.grid_index() + self.lattice.velocity_index(
             0, self.velocity_index_to_measure
         )
         target_qubits = self.lattice.ancilla_mass_index()
 
-        circuit.compose(
-            MCMTGate(
-                XGate(),
-                len(control_qubits),
-                len(target_qubits),
-            ),
-            qubits=control_qubits + target_qubits,
-            inplace=True,
-        )
-
-        circuit.measure(
-            target_qubits,
-            [0],
-        )
-
-        return circuit
+        if qubits_to_invert:
+            self.x(qubits_to_invert)
+        for target_qubit in target_qubits:
+            self.mcx(*control_qubits, target_qubit)
+        self.measure(target_qubits[0], 0)
 
     @override
     def __str__(self) -> str:

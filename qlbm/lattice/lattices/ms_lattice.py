@@ -3,11 +3,11 @@
 from logging import Logger, getLogger
 from typing import Dict, List, Tuple
 
-from qiskit import QuantumCircuit, QuantumRegister
 from typing_extensions import override
 
 from qlbm.components.ab.encodings import ABEncodingType
 from qlbm.lattice.geometry.shapes.base import Shape
+from qlbm.lattice.registers import Register, assign_offsets
 from qlbm.tools.exceptions import LatticeException
 from qlbm.tools.utils import dimension_letter, flatten, is_two_pow
 
@@ -34,10 +34,9 @@ class MSLattice(AmplitudeLattice):
     :attr:`num_ancilla_qubits`  The total number of ancilla (non-velocity, non-grid) qubits required for the quantum circuit to simulate this lattice.
     :attr:`num_total_qubits`    The total number of qubits required for the quantum circuit to simulate the lattice.
                                 This is the sum of the number of grid, velocity, and ancilla qubits.
-    :attr:`registers`           A ``Tuple[qiskit.QuantumRegister, ...]`` that holds registers responsible for specific operations of the QLBM algorithm.
-    :attr:`circuit`             An empty ``qiskit.QuantumCircuit`` with labeled registers that quantum components use as a base.
-                                Each quantum component that is parameterized by a ``Lattice`` makes a copy of this quantum circuit
-                                to which it appends its designated logic.
+    :attr:`registers`           A ``Tuple[Register, ...]`` that holds registers responsible for specific operations of the QLBM algorithm.
+    :attr:`n_qubits`            The total number of qubits across all lattice registers.
+                                Quantum components parameterized by a ``Lattice`` size their circuits from it.
     :attr:`shapes`              A ``Dict[str, List[Shape]]`` that contains all of the :class:`.Shape`\ s encoding the solid geometry of the lattice.
                                 The key of the dictionary is the specific kind of boundary condition of the obstacle (i.e., ``"bounceback"`` or ``"specular"``).
     :attr:`logger`              The performance logger, by default ``getLogger("qlbm")``.
@@ -131,26 +130,32 @@ class MSLattice(AmplitudeLattice):
             ]
         }
 
-    The register setup can be visualized by constructing a lattice object:
+    The register setup can be inspected by constructing a lattice object:
 
-    .. plot::
-        :include-source:
+    .. code-block:: python
 
         from qlbm.lattice import MSLattice
 
         MSLattice(
             {
                 "lattice": {"dim": {"x": 8, "y": 8}, "velocities": {"x": 4, "y": 4}},
-                "geometry": [{"shape":"cuboid", "x": [5, 6], "y": [1, 2], "boundary": "bounceback"}],
+                "geometry": [
+                    {
+                        "shape": "cuboid",
+                        "x": [5, 6],
+                        "y": [1, 2],
+                        "boundary": "bounceback",
+                    }
+                ],
             }
-        ).circuit.draw("mpl")
+        ).registers
     """
 
     num_dims: int
     num_gridpoints: List[int]
     num_velocities: List[int]
     num_total_qubits: int
-    registers: Tuple[QuantumRegister, ...]
+    registers: Tuple[Register, ...]
     logger: Logger
 
     def __init__(
@@ -199,8 +204,7 @@ class MSLattice(AmplitudeLattice):
             self.velocity_registers,
             self.velocity_dir_registers,
         ) = temporary_registers
-        self.registers = tuple(flatten(temporary_registers))
-        self.circuit = QuantumCircuit(*self.registers)
+        self.registers = assign_offsets(flatten(temporary_registers))
 
         logger.info(self.__str__())
 
@@ -392,7 +396,7 @@ class MSLattice(AmplitudeLattice):
     def accumulation_index(self):
         raise LatticeException("Accumulation not yet supported for MSLattice.")
 
-    def get_registers(self) -> Tuple[List[QuantumRegister], ...]:
+    def get_registers(self) -> Tuple[List[Register], ...]:
         """Generates the encoding-specific register required for the streaming step.
 
         For this encoding, different registers encode (i) the velocity direction,
@@ -402,36 +406,32 @@ class MSLattice(AmplitudeLattice):
         Returns
         -------
         List[int]
-            Tuple[QuantumRegister]: The 4-tuple of qubit registers encoding the streaming step.
+            Tuple[Register]: The 4-tuple of qubit registers encoding the streaming step.
         """
         # d ancilla qubits tracking whether a velocity is to be streamed
-        ancilla_vel_register = [QuantumRegister(self.num_dims, name="a_v")]
+        ancilla_vel_register = [Register(self.num_dims, name="a_v")]
 
         # d ancilla qubits used to conditionally reflect velocities
-        ancilla_object_register = [
-            QuantumRegister(self.num_obstacle_qubits, name="a_o")
-        ]
+        ancilla_object_register = [Register(self.num_obstacle_qubits, name="a_o")]
 
         # 2(d-1) ancilla qubits
-        ancilla_comparator_register = [
-            QuantumRegister(self.num_comparator_qubits, name="a_c")
-        ]
+        ancilla_comparator_register = [Register(self.num_comparator_qubits, name="a_c")]
 
         # d qubits encoding the velocity direction
         velocity_dir_register = [
-            QuantumRegister(1, name=f"v_dir_{dimension_letter(c)}")
+            Register(1, name=f"v_dir_{dimension_letter(c)}")
             for c in range(len(self.num_velocities))
         ]
 
         # Velocity qubits
         velocity_registers = [
-            QuantumRegister(v.bit_length() - 1, name=f"v_{dimension_letter(c)}")
+            Register(v.bit_length() - 1, name=f"v_{dimension_letter(c)}")
             for c, v in enumerate(self.num_velocities)
         ]
 
         # Grid qubits
         grid_registers = [
-            QuantumRegister(gp.bit_length(), name=f"g_{dimension_letter(c)}")
+            Register(gp.bit_length(), name=f"g_{dimension_letter(c)}")
             for c, gp in enumerate(self.num_gridpoints)
         ]
 
@@ -477,18 +477,3 @@ class MSLattice(AmplitudeLattice):
     @override
     def get_encoding(self):
         return ABEncodingType.MS
-
-    @override
-    def get_base_circuit(self):
-        return QuantumCircuit(
-            *flatten(
-                [
-                    self.ancilla_velocity_register,
-                    self.ancilla_object_register,
-                    self.ancilla_comparator_register,
-                    self.grid_registers,
-                    self.velocity_registers,
-                    self.velocity_dir_registers,
-                ]
-            )
-        )

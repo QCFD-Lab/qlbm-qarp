@@ -24,7 +24,7 @@ from qlbm.components.spacetime import SpaceTimeQLBM
 from qlbm.components.spacetime.initial import PointWiseSpaceTimeInitialConditions
 from qlbm.lattice import SpaceTimeLattice
 
-from .utils import run_statevector
+from .utils import as_circuit, run_statevector
 
 
 def _origin_velocities_by_position(sv, num_grid_qubits: int, num_velocities: int):
@@ -71,8 +71,8 @@ class TestSpaceTimeFreeStreaming:
         )
         alg = SpaceTimeQLBM(lattice)
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _origin_velocities_by_position(sv, 4, 2)
@@ -85,8 +85,8 @@ class TestSpaceTimeFreeStreaming:
         )
         alg = SpaceTimeQLBM(lattice)
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _origin_velocities_by_position(sv, 4, 2)
@@ -103,8 +103,8 @@ class TestSpaceTimeFreeStreaming:
         )
         alg = SpaceTimeQLBM(lattice)
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _origin_velocities_by_position(sv, 4, 2)
@@ -117,8 +117,8 @@ class TestSpaceTimeFreeStreaming:
         )
         alg = SpaceTimeQLBM(lattice)
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _origin_velocities_by_position(sv, 4, 2)
@@ -157,8 +157,8 @@ class TestSpaceTimeBounceback:
         )
         alg = SpaceTimeQLBM(lattice)
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _origin_velocities_by_position(sv, 4, 2)
@@ -171,8 +171,8 @@ class TestSpaceTimeBounceback:
         )
         alg = SpaceTimeQLBM(lattice)
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _origin_velocities_by_position(sv, 4, 2)
@@ -188,8 +188,8 @@ class TestSpaceTimeBounceback:
         )
         alg = SpaceTimeQLBM(lattice)
 
-        circuit = ic.circuit.copy()
-        circuit.compose(alg.circuit, inplace=True)
+        circuit = as_circuit(ic)
+        circuit.compose(alg)
         sv = run_statevector(circuit)
 
         result = _origin_velocities_by_position(sv, 4, 2)

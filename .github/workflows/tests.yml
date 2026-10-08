@@ -29,26 +29,15 @@ jobs:
           key: pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
             pip-${{ matrix.python-version }}-
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        id: cache-apt
-        with:
-          path: /var/cache/apt/archives
-          key: apt-${{ runner.os }}-libboost-cmake-${{ hashFiles('.github/workflows/tests.yml') }}
-          restore-keys: |
-            apt-${{ runner.os }}-libboost-cmake-
-      - name: Install dependencies
-        if: steps.cache-apt.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libboost-all-dev cmake
       - name: Install qlbm
         id: pip-install
         run: |
           pip install --upgrade pip
-          pip install -e .[cpu,dev]
+          pip install -e .[dev]
       - name: Display Python version
         run: python -c "import sys; print(sys.version)"
+      # Differential cases whose fixture lives in the gitignored
+      # test/oracle/fixtures/large/ skip.
       - name: Run tests
         run: pytest test --doctest-modules --junitxml=junit/test-results.xml --cov=qlbm --cov-report=xml --cov-report=html
       - name: Upload coverage report

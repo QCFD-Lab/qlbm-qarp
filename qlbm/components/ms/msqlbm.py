@@ -1,9 +1,7 @@
 """The end-to-end algorithm of the Collisionless Quantum Lattice Boltzmann Algorithm first introduced in :cite:t:`collisionless` and later extended in :cite:t:`qmem`."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
+from logging import getLogger
 
-from qiskit import QuantumCircuit
 from typing_extensions import override
 
 from qlbm.components.base import LBMAlgorithm
@@ -15,6 +13,8 @@ from qlbm.tools.utils import get_time_series
 from .bounceback_reflection import BounceBackReflectionOperator
 from .specular_reflection import SpecularReflectionOperator
 from .streaming import MSStreamingOperator, StreamingAncillaPreparation
+
+logger = getLogger("qlbm")
 
 
 class MSQLBM(LBMAlgorithm):
@@ -33,50 +33,28 @@ class MSQLBM(LBMAlgorithm):
     Attribute                  Summary
     ========================= ======================================================================
     :attr:`lattice`           The :class:`.MSLattice` based on which the properties of the operator are inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
     :attr:`group_velocities`  Whether to group velocities into 1 streaming step in the CFL series.
     ========================= ======================================================================
     """
 
-    def __init__(
-        self,
-        lattice: MSLattice,
-        group_velocities: bool = False,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(lattice, logger)
-        self.lattice: MSLattice = lattice
-        self.group_velocities = group_velocities
+    lattice: MSLattice
 
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+    def __init__(self, lattice: MSLattice, group_velocities: bool = False) -> None:
+        self.group_velocities = group_velocities
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self):
+    def build_vanilla(self) -> None:
         # Assumes equal velocities in all dimensions
         time_series = get_time_series(
             2 ** self.lattice.num_velocities[0].bit_length(),
             group_velocities=self.group_velocities,
         )
-
-        print(time_series)
-        circuit = QuantumCircuit(
-            *self.lattice.registers,
-        )
+        logger.debug(f"MSQLBM CFL time series: {time_series}")
 
         for velocities_to_increment in time_series:
-            circuit.compose(
-                MSStreamingOperator(
-                    self.lattice,
-                    velocities_to_increment,
-                    logger=self.logger,
-                ).circuit,
-                inplace=True,
-            )
+            self.place(MSStreamingOperator(self.lattice, velocities_to_increment))
+
             if self.lattice.shapes["specular"]:
                 if not all(
                     isinstance(shape, Block)
@@ -85,13 +63,11 @@ class MSQLBM(LBMAlgorithm):
                     raise LatticeException(
                         "All shapes with the 'specular' boundary condition must be of type Block for the MSQLBM algorithm. "
                     )
-                circuit.compose(
+                self.place(
                     SpecularReflectionOperator(
                         self.lattice,
                         self.lattice.shapes["specular"],  # type: ignore
-                        logger=self.logger,
-                    ).circuit,
-                    inplace=True,
+                    )
                 )
 
             for bc in ["bounceback", "specular"]:
@@ -103,26 +79,19 @@ class MSQLBM(LBMAlgorithm):
                         raise LatticeException(
                             f"All shapes with the {bc} boundary condition must be cuboids for the MSQLBM algorithm. "
                         )
-                circuit.compose(
+                self.place(
                     BounceBackReflectionOperator(
                         self.lattice,
                         self.lattice.shapes["bounceback"],  # type: ignore
-                        logger=self.logger,
-                    ).circuit,
-                    inplace=True,
+                    )
                 )
 
             for dim in range(self.lattice.num_dims):
-                circuit.compose(
+                self.place(
                     StreamingAncillaPreparation(
-                        self.lattice,
-                        velocities_to_increment,
-                        dim,
-                        logger=self.logger,
-                    ).circuit,
-                    inplace=True,
+                        self.lattice, velocities_to_increment, dim
+                    )
                 )
-        return circuit
 
     @override
     def __str__(self) -> str:

@@ -1,19 +1,16 @@
 """Streaming operators for the :class:`.SpaceTimeQLBM` algorithm :cite:`spacetime`."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
 from typing import List
 
-from qiskit import QuantumCircuit
 from typing_extensions import override
 
-from qlbm.components.base import SpaceTimeOperator
+from qlbm.components.base import LatticePrimitive
 from qlbm.lattice.lattices.spacetime_lattice import SpaceTimeLattice
 from qlbm.lattice.spacetime.properties_base import LatticeDiscretization
 from qlbm.tools.exceptions import CircuitException
 
 
-class SpaceTimeStreamingOperator(SpaceTimeOperator):
+class SpaceTimeStreamingOperator(LatticePrimitive):
     """An operator that performs streaming as a series of :math:`SWAP` gates as part of the :class:`.SpaceTimeQLBM` algorithm.
 
     The velocities corresponding to neighboring gridpoints are streamed "into" the gridpoint affected relative to the ``timestep``.
@@ -29,7 +26,6 @@ class SpaceTimeStreamingOperator(SpaceTimeOperator):
     ========================= ======================================================================
     :attr:`lattice`           The :class:`.SpaceTimeLattice` based on which the properties of the operator are inferred.
     :attr:`timestep`          The time step for which to perform streaming.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
     ========================= ======================================================================
 
     Example usage:
@@ -50,118 +46,63 @@ class SpaceTimeStreamingOperator(SpaceTimeOperator):
         )
 
         # Draw the streaming operator for 1 time step
-        SpaceTimeStreamingOperator(lattice=lattice, timestep=1).draw("mpl")
+        SpaceTimeStreamingOperator(lattice=lattice, timestep=1).plot()
     """
 
-    def __init__(
-        self,
-        lattice: SpaceTimeLattice,
-        timestep: int,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(lattice, logger)
-        self.lattice = lattice
-        self.timestep = timestep
+    lattice: SpaceTimeLattice
 
+    def __init__(self, lattice: SpaceTimeLattice, timestep: int) -> None:
         if timestep < 1 or timestep > lattice.num_timesteps:
             raise CircuitException(
                 f"Invalid time step {timestep}, select a value between 1 and {lattice.num_timesteps}"
             )
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        self.timestep = timestep
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        discretization = self.lattice.properties.get_discretization()
-        if discretization == LatticeDiscretization.D1Q2:
-            return self.__create_circuit_d1q2()
-        if discretization == LatticeDiscretization.D2Q4:
-            return self.__create_circuit_d2q4()
-
-        raise CircuitException(f"Streaming Operator unsupported for {discretization}.")
-
-    def __create_circuit_d1q2(self) -> QuantumCircuit:
-        circuit = self.lattice.circuit.copy()
-
-        circuit = self.stream_lines(
-            self.lattice.properties.get_streaming_lines(0, True, self.timestep),
-            0,
-            circuit,
-        )
-        circuit = self.stream_lines(
-            self.lattice.properties.get_streaming_lines(0, False, self.timestep),
-            1,
-            circuit,
-        )
-
-        return circuit
-
-    def __create_circuit_d2q4(self) -> QuantumCircuit:
-        circuit = self.lattice.circuit.copy()
-
-        circuit = self.stream_lines(
-            self.lattice.properties.get_streaming_lines(0, True, self.timestep),
-            0,
-            circuit,
-        )
-        circuit = self.stream_lines(
-            self.lattice.properties.get_streaming_lines(0, False, self.timestep),
-            2,
-            circuit,
-        )
-        circuit = self.stream_lines(
-            self.lattice.properties.get_streaming_lines(1, True, self.timestep),
-            1,
-            circuit,
-        )
-        circuit = self.stream_lines(
-            self.lattice.properties.get_streaming_lines(1, False, self.timestep),
-            3,
-            circuit,
-        )
-
-        return circuit
+    def build_vanilla(self) -> None:
+        properties = self.lattice.properties
+        match properties.get_discretization():
+            case LatticeDiscretization.D1Q2:
+                # (dimension, positive direction) -> velocity direction index
+                schedule = [(0, True, 0), (0, False, 1)]
+            case LatticeDiscretization.D2Q4:
+                schedule = [(0, True, 0), (0, False, 2), (1, True, 1), (1, False, 3)]
+            case discretization:
+                raise CircuitException(
+                    f"Streaming Operator unsupported for {discretization}."
+                )
+        for dim, positive, velocity_direction in schedule:
+            self.stream_lines(
+                properties.get_streaming_lines(dim, positive, self.timestep),
+                velocity_direction,
+            )
 
     def stream_lines(
-        self,
-        streaming_lines: List[List[int]],
-        velocity_direction: int,
-        circuit: QuantumCircuit,
-    ) -> QuantumCircuit:
+        self, streaming_lines: List[List[int]], velocity_direction: int
+    ) -> None:
         """
-        Apply the swap gates that move the velocity qubits to their neighboring gridpoints along a line.
+        Emit the swaps that stream one velocity direction along ``streaming_lines``.
 
         Parameters
         ----------
         streaming_lines : List[List[int]]
-            The lines to stream, formatted as ordered lists of neighbor indices to swap.
+            The gridpoint neighbor indices of each line, in streaming order.
         velocity_direction : int
-            The number of the velocity qubit to swap for each neighbor.
-        circuit : QuantumCircuit
-            The circuit to extend.
-
-        Returns
-        -------
-        QuantumCircuit
-            The circuit containing the line streaming operations.
+            The velocity direction to stream.
         """
-        for streaming_line in streaming_lines:
-            for c, neighbor in enumerate(streaming_line):
-                if c == len(streaming_line) - 1:
-                    break
-                circuit.swap(
-                    self.lattice.velocity_index(neighbor, velocity_direction),
-                    self.lattice.velocity_index(
-                        streaming_line[c + 1], velocity_direction
-                    ),
-                )
-
-        return circuit
+        pairs = [
+            (
+                self.lattice.velocity_index(neighbor, velocity_direction)[0],
+                self.lattice.velocity_index(next_neighbor, velocity_direction)[0],
+            )
+            for streaming_line in streaming_lines
+            for neighbor, next_neighbor in zip(
+                streaming_line, streaming_line[1:], strict=False
+            )
+        ]
+        if pairs:
+            self.swap(pairs)
 
     @override
     def __str__(self) -> str:

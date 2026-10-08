@@ -20,6 +20,7 @@ from qlbm.components.ab import ABQLBM
 from qlbm.lattice import ABLattice
 
 from .utils import (
+    as_circuit,
     decode_state,
     get_nonzero_amplitudes,
     make_ab_qubit_layout,
@@ -76,7 +77,7 @@ class TestABFreeStreaming:
         """Channel 1 (+x): (0,0) -> (1,0) after 1 step."""
         alg = ABQLBM(lattice)
         circuit = prepare_single_particle(lattice, (0, 0), 1)
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -93,7 +94,7 @@ class TestABFreeStreaming:
         """Channel 2 (+y): (0,0) -> (0,1) after 1 step."""
         alg = ABQLBM(lattice)
         circuit = prepare_single_particle(lattice, (0, 0), 2)
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -110,7 +111,7 @@ class TestABFreeStreaming:
         """Channel 5 (+x,+y): (0,0) -> (1,1) after 1 step."""
         alg = ABQLBM(lattice)
         circuit = prepare_single_particle(lattice, (0, 0), 5)
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -127,7 +128,7 @@ class TestABFreeStreaming:
         """Channel 3 (-x): (0,0) -> (3,0) via periodic wrap after 1 step."""
         alg = ABQLBM(lattice)
         circuit = prepare_single_particle(lattice, (0, 0), 3)
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -144,7 +145,7 @@ class TestABFreeStreaming:
         """Channel 0 (rest): (1,2) -> (1,2) after 1 step."""
         alg = ABQLBM(lattice)
         circuit = prepare_single_particle(lattice, (1, 2), 0)
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -161,8 +162,8 @@ class TestABFreeStreaming:
         """Channel 1 (+x): (0,0) -> (2,0) after 2 steps."""
         alg = ABQLBM(lattice)
         circuit = prepare_single_particle(lattice, (0, 0), 1)
-        circuit.compose(alg.circuit, inplace=True)
-        circuit.compose(alg.circuit.copy(), inplace=True)
+        circuit.compose(alg)
+        circuit.compose(as_circuit(alg))
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -225,7 +226,7 @@ class TestABBounceback:
         """
         alg = ABQLBM(lattice)
         circuit = prepare_single_particle(lattice, (2, 1), 1)
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -246,7 +247,7 @@ class TestABBounceback:
         """
         alg = ABQLBM(lattice)
         circuit = prepare_single_particle(lattice, (1, 1), 3)
-        circuit.compose(alg.circuit, inplace=True)
+        circuit.compose(alg)
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)
@@ -268,8 +269,8 @@ class TestABBounceback:
         """
         alg = ABQLBM(lattice)
         circuit = prepare_single_particle(lattice, (2, 1), 1)
-        circuit.compose(alg.circuit, inplace=True)
-        circuit.compose(alg.circuit.copy(), inplace=True)
+        circuit.compose(alg)
+        circuit.compose(as_circuit(alg))
 
         sv = run_statevector(circuit)
         amps = get_nonzero_amplitudes(sv)

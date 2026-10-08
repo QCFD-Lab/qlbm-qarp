@@ -3,14 +3,16 @@
 This directory contains contains several examples of how users can use `qlbm` for simulating, visualizing, and analyzing QLBM algorithms. We recommend that each notebook is executed in a **python3.12** or **python3.13** virtual environment from this (`demos`) directory. You can create a new virtual environment as follows:
 
 ```bash
-python -m venv qlbm-cpu-venv
-source qlbm-cpu-venv/bin/activate
+python -m venv qlbm-venv
+source qlbm-venv/bin/activate
 mkdir qlbm-output
 pip install --upgrade pip
-pip install -e ..[cpu,dev,docs]
-pip install jupyter ipykernel seaborn pandas
+pip install -e ..[dev,docs]
+pip install jupyter ipykernel nbconvert
 jupyter lab
 ```
+
+(The `dev` extra already provides `seaborn`, `pandas` and `ipykernel`.)
 
  Currently, the following directories are available:
 
@@ -26,4 +28,4 @@ Users can visualize both geometry and quantum circuits constructed from the JSON
 
 ## Benchmarks
 
-Users who are interested in developing and analyzing the theoretical and runtime properties of QLBMs can use the notebooks residing in the `benchmarks` directory. These notebooks contain utilities for automatically generating QLBM algorithms of different scales, logging relevant data about their properties, and parsing the data into helpful formats such as in-memory databases or plots. Benchmarks include simulator performance, statevector snapshot performance, and algorithm scalability with real hardware.
+Users who are interested in developing and analyzing the theoretical and runtime properties of QLBMs can use the notebooks residing in the `benchmarks` directory. These notebooks contain utilities for automatically generating QLBM algorithms of different scales, logging relevant data about their properties, and parsing the data into helpful formats such as in-memory databases or plots. Benchmarks cover statevector snapshot performance (`statevector_snapshots.ipynb`) and algorithm scalability across optimization levels (`algorithm_scalability.ipynb`).

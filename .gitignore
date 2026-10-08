@@ -122,6 +122,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+qlbm-venv/
 .qlbm-cpu-venv
 qlbm-cpu-venv
 .qlbm-gpu-venv
@@ -171,3 +172,5 @@ test/artifacts
 qlbm-output
 
 *.gif
+# Differential fixtures above the committed size limit (test/oracle/fixture_store.py).
+test/oracle/fixtures/large/

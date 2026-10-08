@@ -2,17 +2,11 @@
 
 from abc import ABC, abstractmethod
 from logging import Logger, getLogger
-from typing import List
-
-from qiskit import QuantumCircuit as QiskitQC
-from qiskit.circuit.library import Initialize
-from qiskit.quantum_info import Statevector
-from qiskit_aer import AerSimulator
 
 from qlbm.infra.reinitialize.base import Reinitializer
 from qlbm.infra.result.base import QBMResult
 from qlbm.lattice import Lattice
-from qlbm.tools.exceptions import CircuitException
+from qlbm.tools.exceptions import ExecutionException
 
 from .simulation_config import SimulationConfig
 
@@ -23,8 +17,8 @@ class CircuitRunner(ABC):
 
     A ``CircuitRunner`` object uses the information provided in a :class:`.SimulationConfig`
     to efficiently simulate the QLBM circuit.
-    This includes converting the initial conditions into a suitable
-    format, concatenating circuits together, performing reinitialization,
+    This includes carrying the quantum state between time steps,
+    concatenating command streams together, performing reinitialization,
     and processing results.
 
     =========================== ======================================================================
@@ -33,12 +27,10 @@ class CircuitRunner(ABC):
     :attr:`config`              The :class:`.SimulationConfig` containing the simulation information.
     :attr:`lattice`             The :class:`.Lattice` of the simulated system.
     :attr:`reinitializer`       The :class:`.Reinitializer` that performs the transition between time steps.
-    :attr:`device`              Currently ignored.
+    :attr:`device`              The simulation device; only ``"CPU"`` is supported.
     :attr:`logger`              The performance logger, by default ``getLogger("qlbm")``.
     =========================== ======================================================================
     """
-
-    available_devices: List[str] = AerSimulator().available_devices()  # type: ignore
 
     def __init__(
         self,
@@ -48,10 +40,9 @@ class CircuitRunner(ABC):
         device: str = "CPU",  # ! TODO reimplement
     ) -> None:
         super().__init__()
-
-        if device not in self.available_devices:
-            raise CircuitException(
-                f"Unsupported Qiskit StatevectorSimulator device: {device}. Supported devices are: {self.available_devices}"
+        if device != "CPU":
+            raise ExecutionException(
+                f"Unsupported device {device!r}. Only 'CPU' is supported."
             )
         self.config = config
         self.lattice = lattice
@@ -63,7 +54,7 @@ class CircuitRunner(ABC):
     def run(
         self,
         num_steps: int,
-        num_shots: int,
+        num_shots: int | None,
         output_directory: str,
         output_file_name: str = "step",
         statevector_snapshots: bool = False,
@@ -75,8 +66,10 @@ class CircuitRunner(ABC):
         ----------
         num_steps : int
             The number of time steps to simulate the system for.
-        num_shots : int
+        num_shots : int | None
             The number of shots to perform for each time step.
+            ``None`` falls back to the config's ``shots``; ``qarp.EXACT``
+            yields exact probabilities instead of sampled counts.
         output_directory : str
             The directory to which output will be stored.
         output_file_name : str, optional
@@ -125,21 +118,3 @@ class CircuitRunner(ABC):
         return self.lattice.create_reinitializer(
             self.config.get_execution_compiler(), self.logger
         )
-
-    def statevector_to_circuit(self, statevector: Statevector) -> QiskitQC:
-        """
-        Converts a given statevector to a qiskit quantum circuit representation for seamless circuit assembly.
-
-        Parameters
-        ----------
-        statevector : Statevector
-            The initial condition statevector.
-
-        Returns
-        -------
-        QiskitQC
-            The quantum circuit representation of the statevector.
-        """
-        circuit = self.lattice.circuit.copy()
-        circuit.append(Initialize(statevector), circuit.qubits)
-        return circuit

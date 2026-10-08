@@ -1,136 +1,76 @@
 """Common primitives used for multiple encodings."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
+from math import acos, log2, sqrt
 from typing import List, Tuple
 
 import numpy as np
-from numpy import pi
-from qiskit import QuantumCircuit
-from qiskit.circuit.library import HGate, MCMTGate, XGate
-from qiskit.quantum_info import Operator
-from qiskit.synthesis import synth_qft_full as QFT
+from qarp.blocks import QFTBlock, SimpleBlock, XnBlock
 from typing_extensions import override
 
-from qlbm.components.base import LBMPrimitive
+from qlbm.components.base import (
+    ControllableComponent,
+    LatticePrimitive,
+    LBMComposite,
+    LBMPrimitive,
+)
 from qlbm.components.common.adders import ParameterizedDraperAdder
 from qlbm.lattice import Lattice
 from qlbm.tools.exceptions import CircuitException
 from qlbm.tools.utils import get_qubits_to_invert
 
 
-class EmptyPrimitive(LBMPrimitive):
+class EmptyPrimitive(LatticePrimitive):
     """
     Empty primitive used for effectively not specifying parts of the QLBM algorithm.
 
     Useful in situations where testing the end-to-end implementation of the algorithm
     where one part of the algorithm is left out or not yet implemented.
-
-    ========================= ======================================================================
-    Attribute                  Summary
-    ========================= ======================================================================
-    :attr:`lattice`           The :class:`.Lattice` based on which the number of qubits is inferred.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
-    ========================= ======================================================================
     """
 
-    def __init__(
-        self,
-        lattice: Lattice,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(logger)
-        self.lattice = lattice
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
-
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        return self.lattice.circuit.copy()
+    def build_vanilla(self) -> None:
+        pass
 
     @override
     def __str__(self) -> str:
         return f"[Primitive EmptyPrimitive with lattice {self.lattice}]"
 
 
-class MCSwap(LBMPrimitive):
+class MCSwap(LatticePrimitive):
     """
     Decomposition of a Multi-Controlled Swap Gate into 1 multi-controlled :math:`X` gate and 2 single-controlled :math:`X` gates.
 
     Decomposition taken from :cite:t:`mcswap`.
-
-    ========================= ======================================================================
-    Attribute                  Summary
-    ========================= ======================================================================
-    :attr:`lattice`           The :class:`.Lattice` based on which the number of qubits is inferred.
-    :attr:`control_qubits`    The qubits that control the swap gate.
-    :attr:`target_qubits`     The two qubits to be swapped.
-    :attr:`logger`            The performance logger, by default ``getLogger("qlbm")``.
-    ========================= ======================================================================
     """
 
     def __init__(
         self,
         lattice: Lattice,
         control_qubits: List[int],
-        target_qubits: Tuple[int, int],
-        logger: Logger = getLogger("qlbm"),
+        swap_qubits: Tuple[int, int],
     ) -> None:
-        super().__init__(logger)
-
-        self.lattice = lattice
         self.control_qubits = control_qubits
-        self.target_qubits = target_qubits
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        self.swap_qubits = swap_qubits
+        super().__init__(lattice)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = self.lattice.circuit.copy()
-
-        circuit.cx(self.target_qubits[1], self.target_qubits[0])
-        circuit.compose(
-            MCMTGate(
-                XGate(), len(self.control_qubits) + 1, len(self.target_qubits) - 1
-            ),
-            qubits=self.control_qubits + list(self.target_qubits),
-            inplace=True,
-        )
-        circuit.cx(self.target_qubits[1], self.target_qubits[0])
-
-        return circuit
+    def build_vanilla(self) -> None:
+        first, second = self.swap_qubits
+        self.cx(second, first)
+        self.mcx(*self.control_qubits, first, second)
+        self.cx(second, first)
 
     @override
     def __str__(self) -> str:
         return f"[Primitive MCSwap with lattice {self.lattice}]"
 
 
-class HammingWeightAdder(LBMPrimitive):
+class HammingWeightAdder(LBMComposite):
     """
     QFT-based Hamming Weight adder.
 
     This primitive adds the hamming weight (number of 1s) in a given register :math:`x`
     to the binary-encoded value of a second register :math:`y`.
-
-    Example usage:
-
-    .. plot::
-        :include-source:
-
-        from qlbm.components.common import HammingWeightAdder
-
-        # Add the Hamming weight of a 3-qubit register onto a 5-qubit register
-        HammingWeightAdder(3, 5).draw("mpl")
     """
 
     x_register_size: int
@@ -143,52 +83,27 @@ class HammingWeightAdder(LBMPrimitive):
     The size of the register to which the hamming weight is added.
     """
 
-    def __init__(
-        self,
-        x_register_size: int,
-        y_register_size: int,
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(logger)
+    def __init__(self, x_register_size: int, y_register_size: int) -> None:
         self.x_register_size = x_register_size
         self.y_register_size = y_register_size
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        super().__init__(x_register_size + y_register_size)
 
     @override
-    def create_circuit(self) -> QuantumCircuit:
-        circuit = QuantumCircuit(self.x_register_size + self.y_register_size)
+    def build_vanilla(self) -> None:
+        y_register = list(range(self.x_register_size, self.n_qubits))
 
-        circuit.compose(
-            QFT(self.y_register_size),
-            inplace=True,
-            qubits=list(
-                range(self.x_register_size, self.x_register_size + self.y_register_size)
-            ),
+        ladder = SimpleBlock(self.n_qubits, name="hamming_weight_ladder")
+        ladder.cp(
+            [
+                (xi, yi, 2 * np.pi / (2 ** (self.y_register_size - k)))
+                for xi in range(self.x_register_size)
+                for k, yi in enumerate(y_register)
+            ]
         )
 
-        angles = np.zeros(self.y_register_size)
-        for i in range(self.y_register_size):
-            angles[i] = 2 * pi / (2 ** (self.y_register_size - i))
-
-        for xi in range(self.x_register_size):
-            for k, yi in enumerate(range(self.y_register_size)):
-                circuit.cp(angles[k], xi, self.x_register_size + yi)
-
-        circuit.compose(
-            QFT(self.y_register_size, inverse=True),
-            inplace=True,
-            qubits=list(
-                range(self.x_register_size, self.x_register_size + self.y_register_size)
-            ),
-        )
-
-        return circuit
+        self.place(QFTBlock(self.y_register_size), y_register)
+        self.place(ladder)
+        self.place(~QFTBlock(self.y_register_size), y_register)
 
     @override
     def __str__(self):
@@ -202,18 +117,9 @@ class TruncatedQFT(LBMPrimitive):
     the operator consists of discrete fourier transform block of size :math:`k\times k`,
     padded with :math:`2^n - k` :math:`1`\ s on the main diagonal.
     The rationale and properties of this operator are described in :cite:`spacetime2`.
-    This primitive is used in both amplitude-based and computational basis state encodings.
-    In the :class:`.ABInitialConditions`, it creates an equal magnitude superposition over the velocity space.
-    In the :class:`.EQCRedistribution`, the superposition is over all basis states with an equivalent mass and momenta.
-
-    Example usage:
-
-    .. plot::
-        :include-source:
-
-        from qlbm.components.common import TruncatedQFT
-
-        TruncatedQFT(4, 5).circuit.decompose(reps=2).draw("mpl")
+    Synthesized via qarpx Quantum Shannon Decomposition (the truncated DFT block
+    is not a structured QFT circuit for general :math:`k`); construction raises a
+    :class:`.CircuitException` when the synthesized unitary misses the target.
     """
 
     num_qubits: int
@@ -222,255 +128,133 @@ class TruncatedQFT(LBMPrimitive):
     dft_size: int
     """The size of the discrete Fourier transform block."""
 
-    def __init__(
-        self,
-        num_qubits: int,
-        dft_size: int,
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(logger)
+    synthesis_tolerance: float = 1e-8
+    """The largest element-wise deviation from the target unitary accepted."""
+
+    def __init__(self, num_qubits: int, dft_size: int) -> None:
         self.num_qubits = num_qubits
         self.dft_size = dft_size
+        super().__init__(num_qubits)
+        # The synthesis is numerical, so its result is checked, not trusted.
+        error = np.max(np.abs(np.asarray(self.unitary_matrix()) - self.target()))
+        if error > self.synthesis_tolerance:
+            raise CircuitException(
+                f"Synthesized TruncatedQFT({num_qubits}, {dft_size}) deviates from "
+                f"the target unitary by {error:.1e}."
+            )
 
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+    def target(self) -> np.ndarray:
+        """The unitary: a normalised DFT on the first :attr:`dft_size` states, identity elsewhere."""
+        k = self.dft_size
+        i, j = np.meshgrid(np.arange(k), np.arange(k), indexing="ij")
+        matrix = np.eye(2**self.num_qubits, dtype=complex)
+        matrix[:k, :k] = np.exp(2j * np.pi * i * j / k) / np.sqrt(k)
+        return matrix
 
     @override
-    def create_circuit(self):
-        circuit = QuantumCircuit(self.num_qubits)
-
-        QFT = np.array(
-            [
-                [
-                    np.exp(2j * np.pi * i * j / self.dft_size) / np.sqrt(self.dft_size)
-                    for j in range(self.dft_size)
-                ]
-                for i in range(self.dft_size)
-            ]
-        )
-
-        U = np.eye(2**self.num_qubits, dtype=complex)
-        U[: self.dft_size, : self.dft_size] = QFT
-        op = Operator(U)
-        assert op.is_unitary()
-
-        circuit.append(op, list(range(self.num_qubits)))
-
-        return circuit
+    def build_vanilla(self) -> None:
+        self.unitary_synthesis(self.target())
 
     @override
     def __str__(self):
         return f"[Primitive TuncatedQFT({self.num_qubits}, {self.dft_size})]"
 
 
-class UniformStatePrep(LBMPrimitive):
+def _open_controlled_h(block: SimpleBlock, control: int, targets: range) -> None:
+    r"""Hadamards on ``targets`` conditioned on ``control`` being :math:`\ket{0}`."""
+    block.x(control)
+    for target in targets:
+        block.ch(control, target)
+    block.x(control)
+
+
+class UniformStatePrep(ControllableComponent):
     r"""Efficient uniform state preparation primitive used to create an equal magnitude superposition over the first :math:`k` basis states.
 
     This is an implementation of Algorithm 1 described by :cite:t:`uniprep`.
     It is used to create an uniform magnitude superposition over arbitrary
     velocity states in :class:`.ABDiscreteUniformInitialConditions`.
-
-    Example usage:
-
-    .. plot::
-        :include-source:
-
-        from qlbm.components.common import UniformStatePrep
-
-        UniformStatePrep(4, 5).draw("mpl")
     """
-
-    num_qubits: int
-    """The number of qubits the operator acts on."""
 
     num_states: int
     """The number of states to generate."""
 
     def __init__(
-        self,
-        num_qubits: int,
-        num_states: int,
-        num_ctrl_qubits: int = 0,
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(logger)
-        self.num_qubits = num_qubits
+        self, num_qubits: int, num_states: int, num_ctrl_qubits: int = 0
+    ) -> None:
         self.num_states = num_states
-        self.num_ctrl_qubits = num_ctrl_qubits
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        super().__init__(num_qubits, num_ctrl_qubits)
 
     @override
-    def create_circuit(self):
-        circuit = QuantumCircuit(
-            self.num_qubits + self.num_ctrl_qubits,
-            name=f"UniformStatePrep{self.num_states}",
-        )
-
-        ctrl_qubits = (
-            list(range(self.num_qubits, self.num_qubits + self.num_ctrl_qubits))
-            if self.num_ctrl_qubits > 0
-            else []
-        )
+    def build_core(self) -> SimpleBlock:
+        core = SimpleBlock(self.num_qubits, name="uniform_state_prep")
+        num_states = self.num_states
 
         # M = 1 : do nothing, stays in |0...0>
-        if self.num_states == 1:
-            return circuit
+        if num_states == 1:
+            return core
 
         # If M is a power of two, the solution is trivial: Hadamards on log2(M) qubits
-        is_power_of_two = (self.num_states & (self.num_states - 1)) == 0
-        if is_power_of_two:
-            r = int(np.log2(self.num_states))
-            for q in range(r):
-                if ctrl_qubits:
-                    circuit.compose(
-                        MCMTGate(HGate(), self.num_ctrl_qubits, 1),
-                        qubits=ctrl_qubits + [q],
-                        inplace=True,
-                    )
-                else:
-                    circuit.h(q)
-
-            return circuit
+        if num_states & (num_states - 1) == 0:
+            core.h(list(range(int(log2(num_states)))))
+            return core
 
         # --- General case: Algorithm 1 (Section 2.1 of the paper) ---
 
         # We only need n_eff = ceil(log2 M) active qubits; the rest stay in |0>
-        n_eff = self._ceil_log2_M(self.num_states)
+        n_eff = num_states.bit_length()
         if n_eff > self.num_qubits:
             raise CircuitException("Internal error: n_eff > num_qubits.")
 
         # Binary decomposition: M = \Sum_j 2^{l_j}, with 0 <= l0 < l1 < ... < lk
-        bit_positions = [i for i in range(n_eff) if (self.num_states >> i) & 1]
-        bit_positions.sort()
-        l0 = bit_positions[0]
+        bit_positions = [i for i in range(n_eff) if (num_states >> i) & 1]
+        l0, l1 = bit_positions[0], bit_positions[1]
         k = len(bit_positions) - 1  # number of "higher" bits
 
         # Helper: safe acos for numerical stability
         def safe_acos(x: float) -> float:
-            return np.acos(max(-1.0, min(1.0, x)))
+            return acos(max(-1.0, min(1.0, x)))
 
         # Step 4: Apply X on qubits at positions l1, l2, ..., lk
-        for j in range(1, len(bit_positions)):
-            if ctrl_qubits:
-                circuit.mcx(control_qubits=ctrl_qubits, target_qubit=bit_positions[j])
-            else:
-                circuit.x(bit_positions[j])
+        core.x(bit_positions[1:])
 
         # Step 5: M0 = 2^{l0}
-        M_prev = 2**l0  # This is M_0 in the paper
+        m_prev = 2**l0
 
         # Step 6–7: If l0 > 0, apply H on qubits 0..(l0-1)
         if l0 > 0:
-            for q in range(l0):
-                if ctrl_qubits:
-                    circuit.compose(
-                        MCMTGate(HGate(), self.num_ctrl_qubits, 1),
-                        qubits=ctrl_qubits + [q],
-                        inplace=True,
-                    )
-                else:
-                    circuit.h(q)
+            core.h(list(range(l0)))
 
         # Step 8: Apply RY(theta0) on |q_{l1}>, theta0 = -2 arccos( sqrt(M0 / M) )
-        l1 = bit_positions[1]
-        theta0 = -2.0 * safe_acos(np.sqrt(M_prev / self.num_states))
-
-        if ctrl_qubits:
-            circuit.mcry(theta0, ctrl_qubits, l1)
-        else:
-            circuit.ry(theta0, l1)
+        core.ry(l1, -2.0 * safe_acos(sqrt(m_prev / num_states)))
 
         # Step 9: Controlled H on qubits i in [l0, l1) with open control on q_{l1} == |0>
-        ctrl = l1
-
-        if ctrl_qubits:
-            circuit.mcx(ctrl_qubits, ctrl)
-        else:
-            circuit.x(ctrl)  # convert open control (on |0>) to normal control (on |1>)
-
-        for i in range(l0, l1):
-            circuit.compose(
-                MCMTGate(HGate(), self.num_ctrl_qubits + 1, 1),
-                qubits=ctrl_qubits + [ctrl, i],
-                inplace=True,
-            )
-
-        if ctrl_qubits:
-            circuit.mcx(ctrl_qubits, ctrl)
-        else:
-            circuit.x(ctrl)
+        _open_controlled_h(core, l1, range(l0, l1))
 
         # Steps 10–13: For-loop over remaining bits
         for m in range(1, k):
-            l_m = bit_positions[m]
-            l_next = bit_positions[m + 1]
+            l_m, l_next = bit_positions[m], bit_positions[m + 1]
 
             # Step 11: Controlled RY(theta_m) on q_{l_{m+1}} with open control on q_{l_m} == |0>
-            numerator = 2**l_m
-            denominator = self.num_states - M_prev
-            theta_m = -2.0 * safe_acos(np.sqrt(numerator / denominator))
-
-            # open control on q_{l_m}
-            ctrl = l_m
-            target = l_next
-            if ctrl_qubits:
-                circuit.mcx(ctrl_qubits, ctrl)
-            else:
-                circuit.x(ctrl)
-            circuit.mcry(theta_m, ctrl_qubits + [ctrl], target)
-            if ctrl_qubits:
-                circuit.mcx(ctrl_qubits, ctrl)
-            else:
-                circuit.x(ctrl)
+            theta_m = -2.0 * safe_acos(sqrt(2**l_m / (num_states - m_prev)))
+            core.x(l_m)
+            core.cry(l_m, l_next, theta_m)
+            core.x(l_m)
 
             # Step 12: Controlled H on qubits i in [l_m, l_{m+1}) with open control on q_{l_{m+1}} == |0>
-            ctrl_next = l_next
-            if ctrl_qubits:
-                circuit.mcx(ctrl_qubits, ctrl_next)
-            else:
-                circuit.x(ctrl_next)
-            for i in range(l_m, l_next):
-                circuit.compose(
-                    MCMTGate(HGate(), self.num_ctrl_qubits + 1, 1),
-                    qubits=ctrl_qubits + [ctrl_next] + [i],
-                    inplace=True,
-                )
-            if ctrl_qubits:
-                circuit.mcx(ctrl_qubits, ctrl_next)
-            else:
-                circuit.x(ctrl_next)
+            _open_controlled_h(core, l_next, range(l_m, l_next))
 
             # Step 13: M_m = M_{m-1} + 2^{l_m}
-            M_prev += 2**l_m
+            m_prev += 2**l_m
 
-        return circuit
-
-    def _ceil_log2_M(self, M: int) -> int:
-        """Minimal number of qubits n such that M <= 2**n."""
-        if M <= 1:
-            return 1
-        # Power of two?
-        if M & (M - 1) == 0:
-            return int(np.log2(M))
-        # Non power-of-two
-        return M.bit_length()
+        return core
 
     @override
     def __str__(self):
         return f"[Primitive UniformStatePrep({self.num_qubits}, {self.num_states})]"
 
 
-class AdditionConversion(LBMPrimitive):
+class AdditionConversion(LBMComposite):
     """
     Converts one basis state to another by incrementation/decrementation.
 
@@ -479,14 +263,6 @@ class AdditionConversion(LBMPrimitive):
 
     The circuit utilizes a :class:`.ParameterizedDraperAdder` which controlled on the state
     of an ancilla qubit to add the difference only to the target basis state.
-
-
-    .. plot::
-        :include-source:
-
-        from qlbm.components.common import AdditionConversion
-
-        AdditionConversion(4, 2, 7).draw("mpl")
     """
 
     num_qubits: int
@@ -507,73 +283,35 @@ class AdditionConversion(LBMPrimitive):
         state_from: int,
         state_to: int,
         num_ctrl_qubits: int = 0,
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(logger)
+    ) -> None:
         self.num_qubits = num_qubits
         self.state_from = state_from
         self.state_to = state_to
         self.num_ctrl_qubits = num_ctrl_qubits
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        super().__init__(num_qubits + num_ctrl_qubits + 1)
 
     @override
-    def create_circuit(self):
-        circuit = QuantumCircuit(self.num_qubits + self.num_ctrl_qubits + 1)
+    def build_vanilla(self) -> None:
+        data_register = list(range(self.num_qubits))
+        ancilla = self.num_qubits
+        control_qubits = list(range(ancilla + 1, self.n_qubits))
 
-        state_setter_circ = StateSetter(
-            self.num_qubits, self.state_from, self.logger
-        ).circuit
+        def flag(state: int) -> None:
+            # Flip the ancilla iff the data register holds |state> (and the controls are set).
+            self.place(StateSetter(self.num_qubits, state), data_register)
+            self.place_controlled(XnBlock(1), data_register + control_qubits, [ancilla])
+            self.place(StateSetter(self.num_qubits, state), data_register)
 
-        circuit.compose(
-            state_setter_circ, qubits=list(range(self.num_qubits)), inplace=True
-        )
-        circuit.mcx(
-            list(range(self.num_qubits))
-            + list(
-                range(self.num_qubits + 1, self.num_qubits + 1 + self.num_ctrl_qubits)
-            ),
-            self.num_qubits,
-        )
-        circuit.compose(
-            state_setter_circ, qubits=list(range(self.num_qubits)), inplace=True
-        )
-
-        circuit.compose(
+        flag(self.state_from)
+        self.place(
             ParameterizedDraperAdder(
                 self.num_qubits,
                 abs(self.state_to - self.state_from),
                 self.state_to > self.state_from,
                 self.num_ctrl_qubits + 1,
-                self.logger,
-            ).circuit,
-            inplace=True,
+            )
         )
-
-        state_setter_circ = StateSetter(
-            self.num_qubits, self.state_to, self.logger
-        ).circuit
-
-        circuit.compose(
-            state_setter_circ, qubits=list(range(self.num_qubits)), inplace=True
-        )
-        circuit.mcx(
-            list(range(self.num_qubits))
-            + list(
-                range(self.num_qubits + 1, self.num_qubits + 1 + self.num_ctrl_qubits)
-            ),
-            self.num_qubits,
-        )
-        circuit.compose(
-            state_setter_circ, qubits=list(range(self.num_qubits)), inplace=True
-        )
-
-        return circuit
+        flag(self.state_to)
 
     @override
     def __str__(self):
@@ -586,13 +324,6 @@ class StateSetter(LBMPrimitive):
 
     The primitive acts a single layer of :math:`\mathrm{X}` gates on the qubit
     indices that have value :math:`\ket{0}` for the input state.
-
-    .. plot::
-        :include-source:
-
-        from qlbm.components.common import StateSetter
-
-        StateSetter(4, 6).draw("mpl")
     """
 
     num_qubits: int
@@ -601,33 +332,16 @@ class StateSetter(LBMPrimitive):
     state_to_set: int
     r"""The state to convert to :math:`\ket{1}^{\otimes n}`"""
 
-    def __init__(
-        self,
-        num_qubits: int,
-        state_to_set: int,
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(logger)
+    def __init__(self, num_qubits: int, state_to_set: int) -> None:
         self.num_qubits = num_qubits
         self.state_to_set = state_to_set
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
+        super().__init__(num_qubits)
 
     @override
-    def create_circuit(self):
-        circuit = QuantumCircuit(self.num_qubits)
-
-        qs = get_qubits_to_invert(self.state_to_set, self.num_qubits)
-
-        if qs:
-            circuit.x(qs)
-
-        return circuit
+    def build_vanilla(self) -> None:
+        qubits_to_invert = get_qubits_to_invert(self.state_to_set, self.num_qubits)
+        if qubits_to_invert:
+            self.x(qubits_to_invert)
 
     @override
     def __str__(self):

@@ -1,14 +1,8 @@
 """The end-to-end algorithm of the Collisionless Quantum Lattice Boltzmann Algorithm first introduced in :cite:t:`collisionless` and later extended in :cite:t:`qmem`."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
-
-from qiskit import QuantumCircuit
 from typing_extensions import override
 
-from qlbm.components.ab.reflection import (
-    ABZoneAgnosticReflectionOperator,
-)
+from qlbm.components.ab.reflection import ABZoneAgnosticReflectionOperator
 from qlbm.components.ab.reflection.standard_reflection import ABReflectionOperator
 from qlbm.components.base import LBMAlgorithm
 from qlbm.lattice.lattices.ab_lattice import ABLattice
@@ -49,68 +43,28 @@ class ABQLBM(LBMAlgorithm):
             }
         )
 
-        ABQLBM(lattice).draw("mpl")
+        ABQLBM(lattice).plot()
     """
 
-    def __init__(
-        self,
-        lattice: ABLattice,
-        use_agnostic_bcs: bool = False,
-        logger: Logger = getLogger("qlbm"),
-    ) -> None:
-        super().__init__(lattice, logger)
-        self.lattice: ABLattice = lattice
+    lattice: ABLattice
 
-        self.use_agnostic_bcs = use_agnostic_bcs
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
-        )
-
-    @override
-    def create_circuit(self):
-        circuit = QuantumCircuit(
-            *self.lattice.registers,
-        )
-
-        circuit.compose(
-            ABStreamingOperator(
-                self.lattice,
-                logger=self.logger,
-            ).circuit,
-            inplace=True,
-        )
-
-        if self.use_agnostic_bcs and self.lattice.has_multiple_geometries():
+    def __init__(self, lattice: ABLattice, use_agnostic_bcs: bool = False) -> None:
+        if use_agnostic_bcs and lattice.has_multiple_geometries():
             raise CircuitException(
                 "Zone-agnostic boundary conditions are not supported "
                 "with multiple geometries. Use use_agnostic_bcs=False "
                 "or specify a single geometry."
             )
+        self.use_agnostic_bcs = use_agnostic_bcs
+        super().__init__(lattice)
 
+    @override
+    def build_vanilla(self) -> None:
+        self.place(ABStreamingOperator(self.lattice))
         if self.use_agnostic_bcs:
-            circuit.compose(
-                ABZoneAgnosticReflectionOperator(
-                    self.lattice,
-                    None,
-                    logger=self.logger,
-                ).circuit,
-                inplace=True,
-            )
+            self.place(ABZoneAgnosticReflectionOperator(self.lattice))
         else:
-            circuit.compose(
-                ABReflectionOperator(
-                    self.lattice,
-                    None,
-                    logger=self.logger,
-                ).circuit,
-                inplace=True,
-            )
-
-        return circuit
+            self.place(ABReflectionOperator(self.lattice))
 
     @override
     def __str__(self) -> str:

@@ -2,9 +2,7 @@ import logging
 
 import numpy as np
 import pytest
-from qiskit import QuantumCircuit, transpile
-from qiskit.quantum_info import Statevector
-from qiskit_aer import AerSimulator
+import qarpx as qx
 
 from qlbm.components.ab.reflection.agnosotic_reflection import (
     ABZoneAgnosticReflectionOracle,
@@ -12,19 +10,15 @@ from qlbm.components.ab.reflection.agnosotic_reflection import (
 from qlbm.lattice import ABLattice
 from qlbm.tools.exceptions import CircuitException
 
-_SIMULATOR = AerSimulator(method="statevector")
-
-
-def _simulate_statevector(circuit: QuantumCircuit) -> Statevector:
-    qc = circuit.copy()
-    qc.save_statevector()
-    tqc = transpile(qc, _SIMULATOR, optimization_level=0)
-    result = _SIMULATOR.run(tqc).result()
-    return result.data(0)["statevector"]
+from .qarp_helpers import (
+    lattice_builder,
+    marginal_probabilities,
+    simulate_statevector,
+)
 
 
 def _encode_basis_state(lattice: ABLattice, x: int, y: int, v: int):
-    circuit = lattice.circuit.copy()
+    circuit = lattice_builder(lattice)
     for i, q in enumerate(lattice.grid_index(0)):
         if (x >> i) & 1:
             circuit.x(q)
@@ -37,12 +31,12 @@ def _encode_basis_state(lattice: ABLattice, x: int, y: int, v: int):
     return circuit
 
 
-def _get_obstacle_ancilla_value(lattice: ABLattice, sv: Statevector) -> dict:
+def _get_obstacle_ancilla_value(lattice: ABLattice, sv: np.ndarray) -> dict:
     obstacle_idx = lattice.ancillae_obstacle_index()
     probs = {}
     for val in [0, 1]:
         prob = 0.0
-        for i, amp in enumerate(sv.data):
+        for i, amp in enumerate(sv):
             obstacle_val = (i >> obstacle_idx[0]) & 1
             if obstacle_val == val:
                 prob += abs(amp) ** 2
@@ -96,7 +90,7 @@ def test_ymonomial_oracle_warns_for_mismatched_y_and_result_registers(caplog):
     with caplog.at_level(logging.WARNING, logger="qlbm"):
         oracle = ABZoneAgnosticReflectionOracle(lattice, shape)
 
-    assert isinstance(oracle.circuit, QuantumCircuit)
+    assert isinstance(oracle, qx.Block)
     assert "zero-padding" in caplog.text
 
 
@@ -118,8 +112,8 @@ def test_ymonomial_oracle_builds_for_equal_register_case():
     shape = lattice.shapes["bounceback"][0]
     oracle = ABZoneAgnosticReflectionOracle(lattice, shape)
 
-    assert isinstance(oracle.circuit, QuantumCircuit)
-    assert oracle.circuit is not None
+    assert isinstance(oracle, qx.Block)
+    assert oracle is not None
 
 
 class TestYMonomialOracleSquareGrid:
@@ -151,8 +145,8 @@ class TestYMonomialOracleSquareGrid:
         oracle = ABZoneAgnosticReflectionOracle(lattice, shape)
 
         prep = _encode_basis_state(lattice, x=2, y=3, v=0)
-        prep.compose(oracle.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(oracle)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[1] == pytest.approx(1.0, abs=1e-10)
@@ -164,8 +158,8 @@ class TestYMonomialOracleSquareGrid:
         oracle = ABZoneAgnosticReflectionOracle(lattice, shape)
 
         prep = _encode_basis_state(lattice, x=1, y=2, v=0)
-        prep.compose(oracle.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(oracle)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[0] == pytest.approx(1.0, abs=1e-10)
@@ -177,8 +171,8 @@ class TestYMonomialOracleSquareGrid:
         oracle = ABZoneAgnosticReflectionOracle(lattice, shape)
 
         prep = _encode_basis_state(lattice, x=3, y=7, v=0)
-        prep.compose(oracle.circuit, inplace=True)
-        sv = _simulate_statevector(prep)
+        prep.compose(oracle)
+        sv = simulate_statevector(prep)
 
         probs = _get_obstacle_ancilla_value(lattice, sv)
         assert probs[1] == pytest.approx(1.0, abs=1e-10)
@@ -191,9 +185,9 @@ class TestYMonomialOracleSquareGrid:
 
         for x, y in [(2, 3), (1, 2), (3, 7), (0, 0)]:
             prep = _encode_basis_state(lattice, x=x, y=y, v=0)
-            prep.compose(oracle.circuit, inplace=True)
-            prep.compose(oracle.circuit, inplace=True)
-            sv = _simulate_statevector(prep)
+            prep.compose(oracle)
+            prep.compose(oracle)
+            sv = simulate_statevector(prep)
 
             probs = _get_obstacle_ancilla_value(lattice, sv)
             assert probs[0] == pytest.approx(1.0, abs=1e-10), (
@@ -207,14 +201,14 @@ class TestYMonomialOracleSquareGrid:
         oracle = ABZoneAgnosticReflectionOracle(lattice, shape)
 
         prep = _encode_basis_state(lattice, x=2, y=3, v=1)
-        original_sv = _simulate_statevector(prep)
+        original_sv = simulate_statevector(prep)
 
-        prep.compose(oracle.circuit, inplace=True)
-        after_sv = _simulate_statevector(prep)
+        prep.compose(oracle)
+        after_sv = simulate_statevector(prep)
 
         grid_qubits = lattice.grid_index()
         np.testing.assert_allclose(
-            original_sv.probabilities(grid_qubits),
-            after_sv.probabilities(grid_qubits),
+            marginal_probabilities(original_sv, grid_qubits),
+            marginal_probabilities(after_sv, grid_qubits),
             atol=1e-10,
         )

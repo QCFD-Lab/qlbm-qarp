@@ -1,20 +1,18 @@
 """Permutations of states belonging to equivalence classes, based on the computational basis state encoding."""
 
-from logging import Logger, getLogger
-from time import perf_counter_ns
+from math import pi
 from typing import override
 
-import numpy as np
-from qiskit import QuantumCircuit
+from qarp.blocks import SimpleBlock
 
-from qlbm.components.base import LBMPrimitive
+from qlbm.components.base import LBMComposite
 from qlbm.components.common.primitives import TruncatedQFT
 from qlbm.lattice.eqc.eqc import EquivalenceClass
 from qlbm.lattice.spacetime.properties_base import LatticeDiscretizationProperties
 from qlbm.tools.utils import is_two_pow
 
 
-class EQCRedistribution(LBMPrimitive):
+class EQCRedistribution(LBMComposite):
     """
     Redistribution operator for equivalence classes in the CBSE encoding.
 
@@ -45,7 +43,7 @@ class EQCRedistribution(LBMPrimitive):
         ).generate_equivalence_classes()
 
         # Select one at random and draw its circuit in the schematic form
-        EQCRedistribution(eqcs.pop(), decompose_block=False).circuit.draw("mpl")
+        EQCRedistribution(eqcs.pop(), decompose_block=False).plot()
 
     The `decompose_block` parameter can be set to ``True`` to decompose the DFT block into a circuit:
 
@@ -62,7 +60,7 @@ class EQCRedistribution(LBMPrimitive):
         ).generate_equivalence_classes()
 
         # Select one at random and draw its decomposed circuit
-        EQCRedistribution(eqcs.pop(), decompose_block=True).circuit.draw("mpl")
+        EQCRedistribution(eqcs.pop(), decompose_block=True).plot()
 
     """
 
@@ -74,55 +72,39 @@ class EQCRedistribution(LBMPrimitive):
     decompose_block: bool
     """
     Whether to decompose the DFT block into a circuit.
-    If set to ``False``, the block is returned as a matrix. Otherwise, it is decomposed into a circuit.
+    Both settings produce the same block; qarp lowers blocks itself.
     Defaults to ``True``.
     """
 
     def __init__(
-        self,
-        equivalence_class: EquivalenceClass,
-        decompose_block: bool = True,
-        logger: Logger = getLogger("qlbm"),
-    ):
-        super().__init__(logger)
+        self, equivalence_class: EquivalenceClass, decompose_block: bool = True
+    ) -> None:
         self.equivalence_class = equivalence_class
         self.decompose_block = decompose_block
-
-        self.logger.info(f"Creating circuit {str(self)}...")
-        circuit_creation_start_time = perf_counter_ns()
-        self.circuit = self.create_circuit()
-        self.logger.info(
-            f"Creating circuit {str(self)} took {perf_counter_ns() - circuit_creation_start_time} (ns)"
+        super().__init__(
+            LatticeDiscretizationProperties.get_num_velocities(
+                equivalence_class.discretization
+            )
         )
 
     @override
-    def create_circuit(self):
-        nv = LatticeDiscretizationProperties.get_num_velocities(
-            self.equivalence_class.discretization
-        )
-        circuit = QuantumCircuit(nv)
-        n = self.equivalence_class.size()
-        nq = np.ceil(np.log2(n)).astype(int)
+    def build_vanilla(self) -> None:
+        num_velocities = self.n_qubits
+        size = self.equivalence_class.size()
+        num_qubits = (size - 1).bit_length()
 
-        redistribution_circuit = QuantumCircuit(nq)
-        if is_two_pow(n):
-            redistribution_circuit.ry(np.pi / 2, list(range(nq)), label="RY(π/2)")
+        if is_two_pow(size):
+            redistribution = SimpleBlock(num_qubits, name="redistribution")
+            redistribution.ry([(qubit, pi / 2) for qubit in range(num_qubits)])
         else:
-            redistribution_circuit = TruncatedQFT(nq, n).circuit
+            redistribution = TruncatedQFT(num_qubits, size)
 
-        circuit.compose(
-            redistribution_circuit.control(
-                nv - int(nq),
-                label=rf"MCRY(π/2, {nq})" if is_two_pow(n) else rf"Coll({n}, {nq})",
-            ),
-            qubits=list(range(nv - 1, -1, -1)),
-            inplace=True,
+        # Controls on the high velocity qubits, the block on the low ones, both reversed.
+        self.place_controlled(
+            redistribution,
+            range(num_velocities - 1, num_qubits - 1, -1),
+            range(num_qubits - 1, -1, -1),
         )
-
-        if not is_two_pow(n):
-            return circuit.decompose() if self.decompose_block else circuit
-        else:
-            return circuit
 
     @override
     def __str__(self):

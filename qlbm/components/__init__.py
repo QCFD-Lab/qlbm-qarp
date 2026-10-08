@@ -14,12 +14,12 @@ from .ab import (
     ABZoneAgnosticReflectionOracle,
 )
 from .base import (
+    ControllableComponent,
+    LatticePrimitive,
     LBMAlgorithm,
+    LBMComposite,
     LBMOperator,
     LBMPrimitive,
-    MSOperator,
-    QuantumComponent,
-    SpaceTimeOperator,
 )
 from .common import (
     EmptyPrimitive,
@@ -28,7 +28,12 @@ from .common import (
     EQCRedistribution,
     HammingWeightAdder,
 )
-from .common.adders import ParameterizedDraperAdder, ParameterizedPhaseShift, PhaseShift
+from .common.adders import (
+    ParameterizedDraperAdder,
+    ParameterizedPhaseShift,
+    PhaseShift,
+    StreamingShift,
+)
 from .common.comparators import SingleRegisterComparator
 from .cqlbm import CQLBM
 from .lqlga import (
@@ -54,17 +59,18 @@ from .ms.streaming import (
 )
 
 __all__ = [
-    "QuantumComponent",
     "LBMPrimitive",
+    "LatticePrimitive",
+    "LBMComposite",
+    "ControllableComponent",
     "GenericLQLGACollisionOperator",
     "LBMOperator",
-    "MSOperator",
-    "SpaceTimeOperator",
     "LBMAlgorithm",
     "SingleRegisterComparator",
     "ParameterizedDraperAdder",
     "PhaseShift",
     "ParameterizedPhaseShift",
+    "StreamingShift",
     "EmptyPrimitive",
     "StreamingAncillaPreparation",
     "ControlledIncrementer",
